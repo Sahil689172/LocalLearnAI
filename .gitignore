@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Manim source
+manim/
+
+# Manim generated files
+media/
+
+# Generated videos
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Audio
+*.wav
+*.mp3
+*.flac
+
+# Environment files
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local AI models
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
