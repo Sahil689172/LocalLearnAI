@@ -4,8 +4,8 @@ LocalLearn AI - Manim Runtime Repair
 Standalone module used by render.py.
 
 Accepts a broken Manim Python script and the Manim error output,
-sends a repair request to Ollama, validates the result, and
-returns the repaired code (or None on failure).
+sends a dynamically-constructed repair request to Ollama,
+validates the result, and returns the repaired code (or None on failure).
 
 Public API
 ----------
@@ -21,12 +21,13 @@ import urllib.error
 import re
 
 # ---------------------------------------------------------------------------
-# CONFIGURATION  (mirrors generate.py — keep in sync)
+# CONFIGURATION
 # ---------------------------------------------------------------------------
 
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 MODEL        = "llama3:latest"
 TIMEOUT_SECS = 300
+MAX_REPAIR_ATTEMPTS = 2
 
 # ---------------------------------------------------------------------------
 # ERROR EXTRACTION
@@ -53,14 +54,12 @@ def extract_manim_error(combined_output: str) -> dict:
 
     lines = combined_output.splitlines()
 
-    # ---- 1. Find the most specific exception line -----------------------
-    # Manim tracebacks end with the exception type and message, e.g.:
-    #   TypeError: Object <class '...'> cannot be converted to an animation
-    exc_pattern = re.compile(r'^([A-Z][a-zA-Z]+Error|Exception|TypeError|'
-                             r'ValueError|AttributeError|NameError|'
-                             r'RuntimeError|KeyError|IndexError|'
-                             r'ImportError|ModuleNotFoundError):\s*(.*)')
-
+    # Find the most specific exception line
+    exc_pattern = re.compile(
+        r'^([A-Z][a-zA-Z]+Error|Exception|TypeError|ValueError|'
+        r'AttributeError|NameError|RuntimeError|KeyError|IndexError|'
+        r'ImportError|ModuleNotFoundError):\s*(.*)'
+    )
     for line in reversed(lines):
         m = exc_pattern.match(line.strip())
         if m:
@@ -68,26 +67,22 @@ def extract_manim_error(combined_output: str) -> dict:
             result["error_msg"]  = m.group(2).strip()
             break
 
-    # ---- 2. Find the line number inside generated_scene.py --------------
-    # Traceback lines look like:
-    #   File "generated_scene.py", line 29, in construct
+    # Find line number inside generated_scene*.py
     file_pattern = re.compile(
-        r'File ".*generated_scene.*", line (\d+)'
+        r'File ".*(?:generated_scene|LocalLearnScene).*", line (\d+)'
     )
     source_lines_in_tb = []
     for i, line in enumerate(lines):
         m = file_pattern.search(line)
         if m:
             result["error_line"] = int(m.group(1))
-            # The next line in the traceback is usually the source code
             if i + 1 < len(lines):
                 source_lines_in_tb.append(lines[i + 1].strip())
 
-    # Keep the last (most specific) source snippet
     if source_lines_in_tb:
         result["source_line"] = source_lines_in_tb[-1]
 
-    # ---- 3. Fallback: grab last non-empty line as the message -----------
+    # Fallback
     if not result["error_msg"]:
         for line in reversed(lines):
             stripped = line.strip()
@@ -97,16 +92,13 @@ def extract_manim_error(combined_output: str) -> dict:
 
     return result
 
-
 # ---------------------------------------------------------------------------
-# RESPONSE CLEANER  (same logic as generate.py — duplicated to keep module
-#                    self-contained without a circular import)
+# RESPONSE CLEANER
 # ---------------------------------------------------------------------------
 
 def _extract_python_code(raw: str) -> str:
     text = raw.strip()
 
-    # 1. Extract from code fence
     if "```" in text:
         fence_lines = text.splitlines()
         inside, code_lines = False, []
@@ -121,7 +113,6 @@ def _extract_python_code(raw: str) -> str:
         if code_lines:
             text = "\n".join(code_lines).strip()
 
-    # 2. Strip preamble before first import
     lines = text.splitlines()
     start = 0
     for i, line in enumerate(lines):
@@ -131,7 +122,6 @@ def _extract_python_code(raw: str) -> str:
             break
     text = "\n".join(lines[start:]).strip()
 
-    # 3. Strip trailing prose
     python_markers = (
         "def ", "class ", "self.", "return", "#", "=", "(",
         ")", "[", "]", ":", "import", "from ", "    ",
@@ -148,13 +138,11 @@ def _extract_python_code(raw: str) -> str:
             break
     return "\n".join(code_lines[:last]).strip()
 
-
 # ---------------------------------------------------------------------------
-# SYNTAX VALIDATION
+# SYNTAX + STRUCTURE VALIDATION
 # ---------------------------------------------------------------------------
 
 def _check_syntax(code: str):
-    """Returns (True, None) or (False, SyntaxError)."""
     try:
         ast.parse(code)
         return True, None
@@ -172,7 +160,6 @@ def _check_structure(code: str) -> list:
         errors.append("Missing: def construct(self):")
     return errors
 
-
 # ---------------------------------------------------------------------------
 # OLLAMA CALL
 # ---------------------------------------------------------------------------
@@ -183,8 +170,8 @@ def _call_ollama(prompt: str) -> str:
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_predict": 1200,
-            "temperature": 0.1,   # very low — we want a faithful fix
+            "num_predict": 1500,
+            "temperature": 0.1,
         },
     }
     body = json.dumps(payload).encode("utf-8")
@@ -224,9 +211,8 @@ def _call_ollama(prompt: str) -> str:
         raise ValueError("Ollama returned an empty response field.")
     return content
 
-
 # ---------------------------------------------------------------------------
-# REPAIR PROMPT
+# REPAIR PROMPT — dynamically built from the actual error
 # ---------------------------------------------------------------------------
 
 def _build_repair_prompt(code: str, error_info: dict) -> str:
@@ -240,35 +226,122 @@ def _build_repair_prompt(code: str, error_info: dict) -> str:
         if source_line else ""
     )
 
+    # Build a specific, actionable rule based on the actual error type/message
+    specific_rule = _make_specific_rule(error_type, error_msg, source_line)
+
     return (
-        "You are debugging a Manim Community Edition Python program.\n"
+        "You are repairing a Manim Community Edition 0.21.0 Python program.\n"
         "The Python syntax is already valid, but Manim failed at runtime.\n"
         "\n"
-        "Fix the Manim API/runtime error.\n"
-        "Do not redesign the animation.\n"
-        "Do not change the topic or educational content.\n"
-        "Fix the minimum amount of code required to resolve the error.\n"
-        "Return ONLY the complete corrected Python program.\n"
-        "No Markdown. No explanation. No ``` fences.\n"
-        "\n"
-        f"Error type : {error_type}\n"
-        f"Error line : {error_line}\n"
-        f"Error      : {error_msg}\n"
+        "ERROR:\n"
+        f"{error_type}: {error_msg}\n"
+        f"Line: {error_line}\n"
         f"{source_hint}"
         "\n"
-        "IMPORTANT MANIM RULES TO APPLY WHEN FIXING:\n"
-        "- FadeIn, FadeOut, Write, Create must be called as FadeIn(mob),\n"
-        "  not passed as bare classes.\n"
-        "- LaggedStart receives Animation instances, e.g.:\n"
-        "      LaggedStart(*[FadeIn(m) for m in group], lag_ratio=0.15)\n"
-        "- Transform(a, b) requires two Mobject arguments.\n"
+        f"RULE:\n{specific_rule}\n"
+        "\n"
+        "IMPORTANT — PRESERVATION RULES:\n"
+        "- Preserve the educational content exactly.\n"
+        "- Preserve the animation sequence.\n"
+        "- Preserve the scene structure.\n"
+        "- Do NOT redesign the lesson.\n"
+        "- Do NOT shorten the video.\n"
+        "- Do NOT remove animations just to make it work.\n"
+        "- Fix ONLY the invalid Python/Manim code.\n"
+        "- Return the COMPLETE corrected Python file.\n"
+        "- Return ONLY executable Python code.\n"
+        "- No Markdown. No explanation.\n"
+        "\n"
+        "MANIM API SAFETY RULES:\n"
+        "- Use only Manim Community Edition 0.21.0 APIs.\n"
+        "- Colors: use RED, BLUE, GREEN, YELLOW, ORANGE, PURPLE,\n"
+        "  WHITE, BLACK, GRAY, GREY — do NOT use RGB(...).\n"
+        "- FadeIn(mob), FadeOut(mob), Write(mob), Create(mob).\n"
+        "- LaggedStart(*[FadeIn(m) for m in group], lag_ratio=0.1).\n"
+        "  NEVER: LaggedStart(FadeIn, group).\n"
+        "- Transform(a, b) requires two Mobjects.\n"
         "- Indicate(mob) and Circumscribe(mob) require a Mobject.\n"
-        "- Do not call methods that do not exist on Text, VGroup, etc.\n"
+        "- Use Create() not ShowCreation() (removed in CE 0.18).\n"
+        "- axes.plot() not axes.get_graph().\n"
         "\n"
         "Original program:\n"
         f"{code}\n"
     )
 
+
+def _make_specific_rule(error_type: str, error_msg: str, source_line: str) -> str:
+    """
+    Return a targeted, human-readable rule that directly addresses
+    the specific error encountered. This is injected into the repair prompt
+    so Ollama understands exactly what to fix.
+    """
+    msg_lower = error_msg.lower()
+    src_lower = source_line.lower()
+
+    # NameError: name 'RGB' is not defined
+    if error_type == "NameError" and "rgb" in msg_lower:
+        return (
+            "Only use colors supported by Manim Community Edition 0.21.0.\n"
+            "The code incorrectly uses RGB(...) which is not a valid Manim CE symbol.\n"
+            "Replace RGB(...) with a valid Manim color constant such as:\n"
+            "    RED, BLUE, GREEN, YELLOW, ORANGE, PURPLE, WHITE, BLACK, GRAY\n"
+            "or a hex string like ManimColor('#FF5733')."
+        )
+
+    # TypeError: Object <class 'FadeIn'> cannot be converted to an animation
+    if error_type == "TypeError" and "cannot be converted to an animation" in msg_lower:
+        return (
+            "Animations must be instantiated with a Mobject before being passed.\n"
+            "The code passed a bare animation class (e.g. FadeIn) instead of an instance.\n"
+            "Fix example:\n"
+            "    WRONG:   LaggedStart(FadeIn, group)\n"
+            "    CORRECT: LaggedStart(*[FadeIn(m) for m in group], lag_ratio=0.1)"
+        )
+
+    # NameError: ShowCreation
+    if "showcreation" in msg_lower or "showcreation" in src_lower:
+        return (
+            "ShowCreation was removed in Manim Community Edition 0.18.\n"
+            "Replace ShowCreation(mob) with Create(mob)."
+        )
+
+    # AttributeError: 'Axes' object has no attribute 'get_graph'
+    if error_type == "AttributeError" and "get_graph" in msg_lower:
+        return (
+            "Axes.get_graph() does not exist in Manim CE.\n"
+            "Replace axes.get_graph(func) with axes.plot(func)."
+        )
+
+    # Generic NameError
+    if error_type == "NameError":
+        name_match = re.search(r"name '(\w+)' is not defined", error_msg)
+        name = name_match.group(1) if name_match else "the undefined name"
+        return (
+            f"The name '{name}' is not defined in Manim Community Edition 0.21.0.\n"
+            "Only use classes, functions, and constants that are part of "
+            "Manim CE.\n"
+            f"Remove or replace '{name}' with a valid Manim CE equivalent."
+        )
+
+    # Generic AttributeError
+    if error_type == "AttributeError":
+        return (
+            "A method or attribute was called on a Manim object that does not exist.\n"
+            "Only call methods that are defined in Manim Community Edition 0.21.0."
+        )
+
+    # Generic TypeError
+    if error_type == "TypeError":
+        return (
+            "A Manim function received an incorrect argument type.\n"
+            "Check that all animations are properly instantiated with Mobject arguments."
+        )
+
+    # Fallback — generic
+    return (
+        f"Fix the {error_type}: {error_msg}\n"
+        "Ensure all Manim APIs used are valid for Manim Community Edition 0.21.0."
+    )
 
 # ---------------------------------------------------------------------------
 # PUBLIC API
@@ -286,7 +359,7 @@ def repair_manim_code(
     ----------
     code           : the full Python source that failed
     error_info     : dict returned by extract_manim_error()
-    attempt_number : 1 or 2 (used only for display)
+    attempt_number : 1 or 2 (for display purposes)
 
     Returns
     -------
@@ -294,7 +367,8 @@ def repair_manim_code(
         repaired_code is None if repair failed at any stage.
     """
     print()
-    print(f"  Asking Ollama to repair the Manim code (attempt {attempt_number})...")
+    print(f"  Asking Ollama to repair the Manim code (attempt {attempt_number}"
+          f" of {MAX_REPAIR_ATTEMPTS})...")
 
     prompt = _build_repair_prompt(code, error_info)
 
@@ -315,10 +389,9 @@ def repair_manim_code(
         print("  Repair produced empty code.")
         return None, elapsed
 
-    # Syntax check
     print("  Validating repaired Python syntax...")
     syntax_ok, syntax_err = _check_syntax(repaired)
-    if not syntax_err is None and not syntax_ok:
+    if not syntax_ok:
         err_msg  = syntax_err.msg    if hasattr(syntax_err, "msg")    else str(syntax_err)
         err_line = syntax_err.lineno if hasattr(syntax_err, "lineno") else "?"
         print(f"  Python syntax validation: FAIL")
@@ -326,7 +399,6 @@ def repair_manim_code(
         return None, elapsed
     print("  Python syntax validation: PASS")
 
-    # Structure check
     struct_errors = _check_structure(repaired)
     if struct_errors:
         print("  Manim structure validation: FAIL")
