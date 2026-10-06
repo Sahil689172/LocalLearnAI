@@ -44,3 +44,28 @@ models/
 *.pt
 *.pth
 *.onnx
+# Python virtual environments
+.venv/
+.tts-venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# TTS / ML model files
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.bin
+
+# Generated audio/video
+*.wav
+*.mp3
+*.mp4
+
+# Manim output
+media/
+
+# Environment variables
+.env
