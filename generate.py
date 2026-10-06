@@ -2,9 +2,9 @@
 LocalLearn AI - Full Pipeline (One Command)
 --------------------------------------------
 Usage:
-    python generate.py "Explain Binary Search"
-    python generate.py "Explain Binary Search" --language hi
-    python generate.py "Explain Binary Search" --language ta
+    python generate.py "insertion sort"
+    python generate.py "insertion sort" --language hi
+    python generate.py "binary search" --language ta
 
 Supported language codes:
     en  English (default)
@@ -13,18 +13,22 @@ Supported language codes:
     te  Telugu
     mr  Marathi
 
-Full pipeline runs automatically:
-    [1/5] Connect to Ollama + generate compact lesson spec
-    [2/5] Create lesson specification
-    [3/5] Generate deterministic Manim animation code
-    [4/5] Validate generated code
-    [5/5] Render video with Manim
+NEW ARCHITECTURE - 7-Stage Pipeline:
+    [1/7] Lesson Planning (Ollama) - structured beats with visual plans
+    [2/7] TTS Generation - native audio for each beat's narration
+    [3/7] Audio Timing - measure actual durations for sync
+    [4/7] Scene Generation - deterministic Manim scene from visual plans
+    [5/7] Manim Rendering - silent video with algorithm animations
+    [6/7] Audio+Video Muxing - FFmpeg combines for final output
+    [7/7] Complete - professional quality educational video
 
 Output is organised under:
     output/<safe_topic>_<timestamp>/
-        lesson_spec.json
-        generated_scene.py
-        video/  (Manim writes here automatically)
+        lesson_spec.json         - planning output (beats + visual plans)
+        audio_output/            - TTS-generated audio files per beat
+        generated_scene.py       - Manim scene file
+        silent_video.mp4         - Manim output (no audio)
+        final_video.mp4          - FINAL OUTPUT (with audio)
 """
 
 import sys
@@ -36,10 +40,12 @@ import glob
 import shutil
 import subprocess
 import datetime
+from pathlib import Path
 
 from lesson_planner import generate_lesson_plan
-from scene_builder  import build_manim_code
-from validator      import validate_and_estimate
+from timing_service import create_timing_service
+from visual_renderer import create_visual_renderer
+from muxing_service import create_muxing_service
 from language_codes import (
     LanguageCode,
     DEFAULT_LANGUAGE,
@@ -52,12 +58,12 @@ from language_codes import (
 # ---------------------------------------------------------------------------
 
 MODEL         = "llama3:latest"
-SCENE_CLASS   = "LocalLearnScene"
-QUALITY_FLAG  = "-ql"   # low quality = fast rendering; change to -qm/-qh later
+SCENE_CLASS   = "GeneratedLessonScene"
+QUALITY_FLAG  = "-ql"   # low quality = fast; use -qm/-qh for better quality
 OUTPUT_ROOT   = "output"
-RENDER_TIMEOUT = 300    # seconds — adjust upwards for high-quality renders
+MANIM_TIMEOUT = 600     # 10 minutes for Manim rendering
 
-SEP = "  " + "-" * 43
+SEP = "  " + "-" * 70
 
 # ---------------------------------------------------------------------------
 # FILESYSTEM HELPERS
@@ -104,178 +110,81 @@ def _save_code(path: str, topic: str, run_dir: str, code: str) -> None:
         fh.write(header + code + "\n")
 
 # ---------------------------------------------------------------------------
-# MP4 DETECTION
-# ---------------------------------------------------------------------------
-
-def _find_mp4(scene_file: str, scene_class: str) -> str | None:
-    """
-    Search for the MP4 Manim produced.
-
-    Manim writes output to:
-        media/videos/<scene_stem>/<quality>/  (relative to CWD or scene file dir)
-
-    Returns the path to the MP4 if found, else None.
-    """
-    scene_stem = os.path.splitext(os.path.basename(scene_file))[0]
-
-    # Patterns Manim uses for output paths
-    search_patterns = [
-        # Alongside the scene file
-        os.path.join(os.path.dirname(scene_file), "media", "videos",
-                     scene_stem, "**", "*.mp4"),
-        # Relative to CWD
-        os.path.join("media", "videos", scene_stem, "**", "*.mp4"),
-        # Absolute anywhere under media/
-        os.path.join("media", "**", f"{scene_class}*.mp4"),
-    ]
-
-    for pattern in search_patterns:
-        matches = glob.glob(pattern, recursive=True)
-        if matches:
-            # Return the most recently modified MP4
-            matches.sort(key=os.path.getmtime, reverse=True)
-            return matches[0]
-
-    return None
-
-
-def _estimate_video_duration(mp4_path: str) -> float | None:
-    """
-    Estimate video duration via ffprobe if available.
-    Returns seconds as float, or None if ffprobe is not available.
-    """
-    try:
-        result = subprocess.run(
-            [
-                "ffprobe", "-v", "quiet",
-                "-print_format", "json",
-                "-show_format",
-                mp4_path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            duration = data.get("format", {}).get("duration")
-            if duration:
-                return float(duration)
-    except Exception:
-        pass
-    return None
-
-# ---------------------------------------------------------------------------
 # MANIM RENDERER
 # ---------------------------------------------------------------------------
 
-def _render(scene_file: str, scene_class: str, quality_flag: str) -> tuple:
+def _render_manim(scene_file: str, scene_class: str, quality_flag: str, output_dir: str) -> tuple:
     """
-    Invoke Manim via subprocess.
-
-    Uses sys.executable so the same virtual environment is used.
+    Invoke Manim via subprocess to render silent video.
 
     Returns:
-        (returncode, combined_output, elapsed_seconds)
+        (success: bool, video_path: str|None, elapsed_seconds: float)
     """
     cmd = [
         sys.executable, "-m", "manim",
         quality_flag,
         scene_file,
         scene_class,
+        "--output_file", "silent_video",
+        "--media_dir", os.path.join(output_dir, "media"),
     ]
 
-    start        = time.perf_counter()
-    output_lines = []
+    start = time.perf_counter()
 
     try:
-        process = subprocess.Popen(
+        print("  Running Manim...")
+        result = subprocess.run(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,   # merge stderr into stdout
+            capture_output=True,
             text=True,
-            bufsize=1,
+            timeout=MANIM_TIMEOUT
         )
+        
+        elapsed = time.perf_counter() - start
+        
+        if result.returncode != 0:
+            print(f"  [ERROR] Manim rendering failed:")
+            print(result.stderr)
+            return False, None, elapsed
+        
+        # Find the generated video
+        video_path = _find_manim_output(output_dir, scene_file, scene_class)
+        
+        if not video_path:
+            print("  [ERROR] Could not locate Manim output video")
+            return False, None, elapsed
+        
+        return True, video_path, elapsed
 
-        for line in process.stdout:
-            print(line, end="", flush=True)
-            output_lines.append(line)
-
-        process.wait()
-        returncode = process.returncode
-
+    except subprocess.TimeoutExpired:
+        elapsed = time.perf_counter() - start
+        print(f"  [ERROR] Manim rendering timed out after {MANIM_TIMEOUT}s")
+        return False, None, elapsed
     except FileNotFoundError:
         elapsed = time.perf_counter() - start
-        return -1, "Manim executable not found.", elapsed
-    except KeyboardInterrupt:
-        print()
-        print("  [INTERRUPTED] Rendering cancelled.")
-        sys.exit(1)
+        print("  [ERROR] Manim not found. Install with: pip install manim")
+        return False, None, elapsed
+    except Exception as e:
+        elapsed = time.perf_counter() - start
+        print(f"  [ERROR] Manim rendering failed: {e}")
+        return False, None, elapsed
 
-    elapsed  = time.perf_counter() - start
-    combined = "".join(output_lines)
-    return returncode, combined, elapsed
 
-# ---------------------------------------------------------------------------
-# SYNTAX REPAIR (one attempt via Ollama — only if validation fails)
-# ---------------------------------------------------------------------------
-
-def _attempt_repair(code: str, syntax_err) -> tuple:
-    """One Ollama repair attempt. Returns (repaired_code|None, elapsed)."""
-    import urllib.request
-
-    err_msg  = syntax_err.msg    if hasattr(syntax_err, "msg")    else str(syntax_err)
-    err_line = syntax_err.lineno if hasattr(syntax_err, "lineno") else "?"
-
-    print(f"  Attempting syntax repair (line {err_line}: {err_msg})...")
-
-    prompt = (
-        "Fix the Python syntax error in this Manim code.\n"
-        "Do NOT redesign the animation. Fix ONLY the syntax error.\n"
-        "Return the complete corrected Python code. No Markdown.\n"
-        f"\nSyntax error: {err_msg}\nLine: {err_line}\n\nCode:\n{code}\n"
-    )
-    payload = {
-        "model": MODEL, "prompt": prompt, "stream": False,
-        "options": {"num_predict": 1500, "temperature": 0.1},
-    }
-    body = json.dumps(payload).encode("utf-8")
-    req  = urllib.request.Request(
-        "http://localhost:11434/api/generate", data=body,
-        headers={"Content-Type": "application/json"}, method="POST",
-    )
-    start = time.perf_counter()
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        raw = data.get("response", "")
-    except Exception as exc:
-        print(f"  Repair failed: {exc}")
-        return None, time.perf_counter() - start
-    elapsed = time.perf_counter() - start
-
-    # Strip fences / preamble
-    text = raw.strip()
-    if "```" in text:
-        lns, inside, out = text.splitlines(), False, []
-        for ln in lns:
-            if not inside:
-                if ln.strip().startswith("```"):
-                    inside = True
-            else:
-                if ln.strip() == "```":
-                    break
-                out.append(ln)
-        if out:
-            text = "\n".join(out).strip()
-    lns = text.splitlines()
-    for i, ln in enumerate(lns):
-        s = ln.strip()
-        if s.startswith("from manim import") or s.startswith("import manim"):
-            text = "\n".join(lns[i:]).strip()
-            break
-
-    return (text if text else None), elapsed
+def _find_manim_output(output_dir: str, scene_file: str, scene_class: str) -> str | None:
+    """Find the Manim-generated video file."""
+    # Manim outputs to media/videos/<scene_name>/<quality>/
+    media_dir = os.path.join(output_dir, "media", "videos")
+    
+    if not os.path.exists(media_dir):
+        return None
+    
+    # Search for MP4 files
+    for root, dirs, files in os.walk(media_dir):
+        for file in files:
+            if file.endswith(".mp4"):
+                return os.path.join(root, file)
+    
+    return None
 
 # ---------------------------------------------------------------------------
 # DISPLAY
@@ -285,7 +194,7 @@ def _banner(topic: str, language: LanguageCode) -> None:
     lang_display = LANGUAGE_NAMES[language]
     print()
     print(SEP)
-    print("  LocalLearn AI")
+    print("  LocalLearn AI - Professional Educational Video Generator")
     print(SEP)
     print(f"  Topic:    {topic}")
     print(f"  Language: {lang_display} ({language.value})")
@@ -296,21 +205,16 @@ def _banner(topic: str, language: LanguageCode) -> None:
 
 def _step(n: int, total: int, label: str) -> None:
     print(f"  [{n}/{total}] {label}")
+    print()
 
 
 def _print_final_summary(
     topic: str,
     language: LanguageCode,
-    conn_time: float,
-    planning_time: float,
-    build_time: float,
-    val_time: float,
-    render_time: float,
-    repair_time: float,
+    stage_times: dict,
     total_time: float,
     video_path: str | None,
     video_duration: float | None,
-    estimated_duration: float,
     run_dir: str,
     failed: bool = False,
 ) -> None:
@@ -320,37 +224,34 @@ def _print_final_summary(
     if failed:
         print("  LOCALLEARN AI — FAILED")
     else:
-        print("  LOCALLEARN AI COMPLETE")
+        print("  LOCALLEARN AI COMPLETE ✓")
     print(SEP)
     print()
     print(f"  Topic:              {topic}")
     print(f"  Language:           {lang_display} ({language.value})")
     print()
-    print(f"  Ollama connection:  {conn_time:.2f} sec")
-    print(f"  Lesson planning:    {planning_time:.2f} sec")
-    print(f"  Code generation:    {build_time:.4f} sec  (deterministic)")
-    if repair_time > 0:
-        print(f"  Repair:             {repair_time:.2f} sec")
-    print(f"  Validation:         {val_time:.2f} sec")
-    if not failed:
-        print(f"  Render time:        {render_time:.2f} sec")
+    print("  Pipeline Timing:")
+    print(f"    [1/7] Planning:     {stage_times.get('planning', 0):.2f}s")
+    print(f"    [2/7] TTS:          {stage_times.get('tts', 0):.2f}s")
+    print(f"    [3/7] Timing:       {stage_times.get('timing', 0):.2f}s")
+    print(f"    [4/7] Scene Gen:    {stage_times.get('scene_gen', 0):.4f}s")
+    print(f"    [5/7] Manim:        {stage_times.get('manim', 0):.2f}s")
+    print(f"    [6/7] Muxing:       {stage_times.get('muxing', 0):.2f}s")
+    print(f"    [7/7] Complete:     {stage_times.get('complete', 0):.2f}s")
     print()
-    print(f"  Total time:         {total_time:.2f} sec")
+    print(f"  Total Pipeline:     {total_time:.2f}s ({total_time/60:.1f} min)")
     print()
 
-    if not failed:
-        if video_path:
-            print(f"  Video:")
-            print(f"    {os.path.abspath(video_path)}")
-            print()
-        if video_duration is not None:
-            print(f"  Video duration:     {video_duration:.1f} sec")
-        else:
-            print(f"  Est. duration:      {estimated_duration:.1f} sec")
+    if not failed and video_path:
+        print(f"  FINAL VIDEO:")
+        print(f"    {os.path.abspath(video_path)}")
         print()
-        print(f"  Output directory:")
+        if video_duration:
+            print(f"  Video Duration:     {video_duration:.1f}s")
+        print()
+        print(f"  Output Directory:")
         print(f"    {os.path.abspath(run_dir)}")
-    else:
+    elif failed:
         print("  Pipeline did not complete successfully.")
         print(f"  Partial output in: {os.path.abspath(run_dir)}")
 
@@ -359,26 +260,33 @@ def _print_final_summary(
     print()
 
 # ---------------------------------------------------------------------------
-# MAIN
+# MAIN - 7-STAGE PIPELINE
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-
+    """
+    Main entry point for LocalLearn AI video generation.
+    
+    Orchestrates the complete 7-stage pipeline:
+    1. Lesson Planning (Ollama)
+    2. TTS Generation
+    3. Audio Timing Measurement
+    4. Scene File Generation
+    5. Manim Rendering (silent video)
+    6. Audio+Video Muxing
+    7. Complete
+    """
+    
     pipeline_start = time.perf_counter()
+    stage_times = {}
 
-    # ------------------------------------------------------------------
-    # Arguments
-    # ------------------------------------------------------------------
-    # Usage:
-    #   python generate.py "topic"
-    #   python generate.py "topic" --language hi
-    # ------------------------------------------------------------------
+    # Parse arguments
     args = sys.argv[1:]
 
     if not args or not args[0].strip():
         print()
         print("  Usage:   python generate.py \"<topic>\" [--language <code>]")
-        print("  Example: python generate.py \"Explain Binary Search\" --language hi")
+        print("  Example: python generate.py \"insertion sort\" --language hi")
         print()
         print("  Supported language codes:")
         for lc in LanguageCode:
@@ -405,240 +313,241 @@ def main() -> None:
 
     _banner(topic, language)
 
-    # Create the unique output directory for this run
+    # Create output directory structure
     run_dir = _make_run_dir(topic)
+    audio_dir = os.path.join(run_dir, "audio_output")
+    os.makedirs(audio_dir, exist_ok=True)
 
-    spec_path  = os.path.join(run_dir, "lesson_spec.json")
+    spec_path = os.path.join(run_dir, "lesson_spec.json")
     scene_path = os.path.join(run_dir, "generated_scene.py")
+    final_video_path = os.path.join(run_dir, "final_video.mp4")
 
-    # Timing accumulators
-    conn_time    = 0.0
-    planning_time = 0.0
-    build_time   = 0.0
-    val_time     = 0.0
-    render_time  = 0.0
-    repair_time  = 0.0
-    estimated_dur = 0.0
+    TOTAL_STAGES = 7
 
-    # ------------------------------------------------------------------
-    # [1/5] Connect to Ollama + generate lesson spec
-    # ------------------------------------------------------------------
-    TOTAL_STEPS = 5
-    _step(1, TOTAL_STEPS, "Connecting to Ollama...")
-
-    conn_start = time.perf_counter()
     try:
-        lesson_spec, planning_time = generate_lesson_plan(topic, language=language)
-    except RuntimeError as exc:
-        print(f"\n  [ERROR] {exc}")
-        sys.exit(1)
-    except TimeoutError as exc:
-        print(f"\n  [TIMEOUT] {exc}")
-        sys.exit(1)
-    except ValueError as exc:
-        print(f"\n  [ERROR] {exc}")
-        sys.exit(1)
-
-    conn_time = time.perf_counter() - conn_start
-
-    print("  Ollama connection successful.")
-    print(f"  Connection time: {conn_time:.2f} sec")
-    print()
-
-    # ------------------------------------------------------------------
-    # [2/5] Lesson specification
-    # ------------------------------------------------------------------
-    _step(2, TOTAL_STEPS, "Creating lesson specification...")
-
-    _save_json(lesson_spec, spec_path)
-
-    n_scenes     = len(lesson_spec.get("scenes", []))
-    target_dur   = lesson_spec.get("target_duration", 75)
-
-    print(f"  Lesson specification generated.")
-    print(f"  Planning time: {planning_time:.2f} sec")
-    print(f"  Scenes: {n_scenes}")
-    print(f"  Target duration: {target_dur} sec")
-    print(f"  Saved: {spec_path}")
-    print()
-
-    # ------------------------------------------------------------------
-    # [3/5] Generate Manim animation code (deterministic — no LLM)
-    # ------------------------------------------------------------------
-    _step(3, TOTAL_STEPS, "Generating Manim animation...")
-
-    build_start = time.perf_counter()
-    code        = build_manim_code(lesson_spec)
-    build_time  = time.perf_counter() - build_start
-
-    print(f"  Animation code generated.")
-    print(f"  Code generation time: {build_time:.4f} sec")
-    print()
-
-    # ------------------------------------------------------------------
-    # [4/5] Validate
-    # ------------------------------------------------------------------
-    _step(4, TOTAL_STEPS, "Validating animation...")
-
-    val_start = time.perf_counter()
-    result    = validate_and_estimate(code)
-    val_time  = time.perf_counter() - val_start
-
-    estimated_dur = result.get("estimated_duration", 0.0)
-
-    # Report validation
-    syntax_ok  = result["syntax_valid"]
-    struct_ok  = not result["structure_errors"]
-    api_warns  = result.get("api_warnings", [])
-
-    if syntax_ok and struct_ok and not api_warns:
-        print(f"  Validation: PASS")
-    else:
-        if not syntax_ok:
-            err = result["syntax_error"]
-            ln  = err.lineno if hasattr(err, "lineno") else "?"
-            print(f"  Syntax:    FAIL  (line {ln})")
-        else:
-            print(f"  Syntax:    PASS")
-        print(f"  Structure: {'PASS' if struct_ok else 'FAIL'}")
-        if api_warns:
-            print(f"  API scan:  WARN  ({len(api_warns)} issue(s))")
-    print(f"  Validation time: {val_time:.2f} sec")
-    print()
-
-    # Handle syntax failure — one repair attempt
-    if not syntax_ok:
-        repaired, repair_time = _attempt_repair(code, result["syntax_error"])
-        if repaired:
-            result = validate_and_estimate(repaired)
-            if result["syntax_valid"]:
-                print("  Syntax:    PASS  (after repair)")
-                code = repaired
-                estimated_dur = result.get("estimated_duration", 0.0)
-            else:
-                print("  Syntax:    FAIL  (repair did not fix it)")
-        else:
-            print("  Repair failed.")
-
-        if not result["syntax_valid"]:
-            # Save invalid code for inspection
-            inv_path = os.path.join(run_dir, "generated_scene_invalid.py")
-            _save_code(inv_path, topic, run_dir, code)
-            print(f"  Invalid code saved: {inv_path}")
-            total = time.perf_counter() - pipeline_start
-            _print_final_summary(
-                topic, language, conn_time, planning_time, build_time, val_time,
-                render_time, repair_time, total,
-                video_path=None, video_duration=None,
-                estimated_duration=estimated_dur, run_dir=run_dir, failed=True
-            )
-            sys.exit(1)
-
-    # Handle API warnings — pre-render repair
-    if api_warns:
-        print("  API warnings — attempting pre-render repair...")
-        first_warn  = api_warns[0]
-        first_match = first_warn["lines"][0] if first_warn["lines"] else (0, "")
-        lineno, src = first_match
-        all_labels  = "; ".join(w["label"] for w in api_warns)
-        error_info  = {
-            "error_type":  "APIWarning",
-            "error_msg":   all_labels,
-            "error_line":  lineno,
-            "source_line": src,
-        }
+        # ===================================================================
+        # STAGE 1: LESSON PLANNING (Ollama)
+        # ===================================================================
+        _step(1, TOTAL_STAGES, "Lesson Planning (Ollama)")
+        
+        stage_start = time.perf_counter()
         try:
-            from manim_repair import repair_manim_code
-            repaired, api_rt = repair_manim_code(code, error_info, attempt_number=1)
-            repair_time += api_rt
-            if repaired:
-                new_result = validate_and_estimate(repaired)
-                remaining  = new_result.get("api_warnings", [])
-                if not remaining:
-                    print("  API scan:  PASS  (after repair)")
-                else:
-                    print(f"  API scan:  WARN  ({len(remaining)} issue(s) remain — proceeding)")
-                code          = repaired
-                result        = new_result
-                estimated_dur = result.get("estimated_duration", 0.0)
-            else:
-                print("  Pre-render repair failed — proceeding anyway")
-        except ImportError:
-            print("  manim_repair not available — proceeding without API repair")
+            lesson_spec, planning_time = generate_lesson_plan(topic, language=language)
+        except Exception as e:
+            print(f"  [ERROR] Lesson planning failed: {e}")
+            raise
+        
+        stage_times['planning'] = time.perf_counter() - stage_start
+        
+        # Save lesson spec
+        _save_json(lesson_spec, spec_path)
+        
+        beats = lesson_spec.get("beats", [])
+        target_dur = lesson_spec.get("target_duration", 90)
+        
+        print(f"  ✓ Lesson specification generated")
+        print(f"    Planning time: {stage_times['planning']:.2f}s")
+        print(f"    Beats: {len(beats)}")
+        print(f"    Target duration: {target_dur}s")
+        print(f"    Saved: {os.path.basename(spec_path)}")
         print()
 
-    # Save the validated scene file inside run_dir
-    _save_code(scene_path, topic, run_dir, code)
-    print(f"  Scene file saved: {scene_path}")
-    print()
-
-    # ------------------------------------------------------------------
-    # [5/5] Render
-    # ------------------------------------------------------------------
-    _step(5, TOTAL_STEPS, "Rendering video...")
-    print()
-
-    render_start = time.perf_counter()
-    returncode, combined_output, render_time = _render(
-        scene_path, SCENE_CLASS, QUALITY_FLAG
-    )
-    # render_time already set by _render, but recalculate for consistency
-    render_time = time.perf_counter() - render_start
-
-    print()   # blank line after Manim's own output
-
-    if returncode != 0:
-        # Extract error from Manim output
-        print(SEP)
-        print("  Rendering FAILED")
-        print(SEP)
-        # Print last 20 lines of Manim output as the error context
-        manim_lines = [l for l in combined_output.splitlines() if l.strip()]
-        for line in manim_lines[-20:]:
-            print(f"  {line}")
+        # ===================================================================
+        # STAGE 2: TTS GENERATION
+        # ===================================================================
+        _step(2, TOTAL_STAGES, "TTS Generation")
+        
+        stage_start = time.perf_counter()
+        
+        # Initialize TTS service
+        print("  Loading TTS model...")
+        timing_service = create_timing_service(output_dir=audio_dir)
+        
+        # Generate audio for all beats
+        print(f"  Generating audio for {len(beats)} beats...")
+        try:
+            enriched_beats, audio_metadata = timing_service.measure_beats(lesson_spec)
+        except Exception as e:
+            print(f"  [ERROR] TTS generation failed: {e}")
+            raise
+        
+        stage_times['tts'] = time.perf_counter() - stage_start
+        
+        total_audio_dur = audio_metadata['total_duration']
+        
+        print(f"  ✓ TTS generation complete")
+        print(f"    Generation time: {stage_times['tts']:.2f}s")
+        print(f"    Audio files: {audio_metadata['beat_count']}")
+        print(f"    Total audio duration: {total_audio_dur:.2f}s")
         print()
-        total = time.perf_counter() - pipeline_start
+
+        # ===================================================================
+        # STAGE 3: AUDIO TIMING MEASUREMENT
+        # ===================================================================
+        _step(3, TOTAL_STAGES, "Audio Timing Measurement")
+        
+        stage_start = time.perf_counter()
+        
+        # Update lesson spec with timing data
+        lesson_spec['beats'] = enriched_beats
+        lesson_spec['measured_duration'] = total_audio_dur
+        
+        # Save updated spec with timing
+        _save_json(lesson_spec, spec_path)
+        
+        stage_times['timing'] = time.perf_counter() - stage_start
+        
+        print(f"  ✓ Audio timing measured")
+        print(f"    Timing calculation: {stage_times['timing']:.4f}s")
+        print(f"    Updated spec saved")
+        print()
+
+        # ===================================================================
+        # STAGE 4: SCENE FILE GENERATION
+        # ===================================================================
+        _step(4, TOTAL_STAGES, "Scene File Generation")
+        
+        stage_start = time.perf_counter()
+        
+        # Create visual renderer service
+        visual_service = create_visual_renderer(output_dir=run_dir)
+        
+        # Validate beats before generating scene
+        validation_errors = visual_service.validate_beats(enriched_beats)
+        if validation_errors:
+            print("  [WARNING] Beat validation issues:")
+            for err in validation_errors[:5]:  # Show first 5
+                print(f"    - {err}")
+            if len(validation_errors) > 5:
+                print(f"    ... and {len(validation_errors) - 5} more")
+            print()
+        
+        # Generate scene file
+        try:
+            scene_file = visual_service.generate_scene_file(
+                beats=enriched_beats,
+                output_filename="generated_scene.py"
+            )
+        except Exception as e:
+            print(f"  [ERROR] Scene generation failed: {e}")
+            raise
+        
+        stage_times['scene_gen'] = time.perf_counter() - stage_start
+        
+        print(f"  ✓ Scene file generated")
+        print(f"    Generation time: {stage_times['scene_gen']:.4f}s")
+        print(f"    Scene file: {os.path.basename(scene_file)}")
+        print()
+
+        # ===================================================================
+        # STAGE 5: MANIM RENDERING (SILENT VIDEO)
+        # ===================================================================
+        _step(5, TOTAL_STAGES, "Manim Rendering (silent video)")
+        
+        stage_start = time.perf_counter()
+        
+        success, silent_video_path, manim_time = _render_manim(
+            scene_file=scene_path,
+            scene_class=SCENE_CLASS,
+            quality_flag=QUALITY_FLAG,
+            output_dir=run_dir
+        )
+        
+        stage_times['manim'] = manim_time
+        
+        if not success:
+            print("  [ERROR] Manim rendering failed")
+            raise RuntimeError("Manim rendering failed")
+        
+        print(f"  ✓ Manim rendering complete")
+        print(f"    Render time: {stage_times['manim']:.2f}s")
+        print(f"    Silent video: {os.path.basename(silent_video_path)}")
+        print()
+
+        # ===================================================================
+        # STAGE 6: AUDIO+VIDEO MUXING
+        # ===================================================================
+        _step(6, TOTAL_STAGES, "Audio+Video Muxing (FFmpeg)")
+        
+        stage_start = time.perf_counter()
+        
+        # Initialize muxing service
+        muxing_service = create_muxing_service()
+        
+        # Collect audio files in order
+        audio_files = [beat['audio_file'] for beat in enriched_beats]
+        
+        # Mux video with audio
+        try:
+            final_video = muxing_service.mux_video_with_beat_audio(
+                video_path=silent_video_path,
+                audio_files=audio_files,
+                output_path=final_video_path,
+                overwrite=True
+            )
+        except Exception as e:
+            print(f"  [ERROR] Muxing failed: {e}")
+            raise
+        
+        stage_times['muxing'] = time.perf_counter() - stage_start
+        
+        # Get final video info
+        try:
+            video_info = muxing_service.get_video_info(final_video)
+            video_duration = video_info.get('duration')
+        except:
+            video_duration = None
+        
+        print(f"  ✓ Muxing complete")
+        print(f"    Muxing time: {stage_times['muxing']:.2f}s")
+        print(f"    Final video: {os.path.basename(final_video)}")
+        print()
+
+        # ===================================================================
+        # STAGE 7: COMPLETE
+        # ===================================================================
+        _step(7, TOTAL_STAGES, "Complete")
+        
+        stage_times['complete'] = time.perf_counter() - stage_start
+        
+        print(f"  ✓ Pipeline complete")
+        print()
+
+        # Calculate total time
+        total_time = time.perf_counter() - pipeline_start
+
+        # Print final summary
         _print_final_summary(
-            topic, language, conn_time, planning_time, build_time, val_time,
-            render_time, repair_time, total,
-            video_path=None, video_duration=None,
-            estimated_duration=estimated_dur, run_dir=run_dir, failed=True
+            topic=topic,
+            language=language,
+            stage_times=stage_times,
+            total_time=total_time,
+            video_path=final_video,
+            video_duration=video_duration,
+            run_dir=run_dir,
+            failed=False
+        )
+
+    except KeyboardInterrupt:
+        print()
+        print("  [INTERRUPTED] Pipeline cancelled by user")
+        sys.exit(1)
+    
+    except Exception as e:
+        total_time = time.perf_counter() - pipeline_start
+        print()
+        print(f"  [FATAL ERROR] {e}")
+        _print_final_summary(
+            topic=topic,
+            language=language,
+            stage_times=stage_times,
+            total_time=total_time,
+            video_path=None,
+            video_duration=None,
+            run_dir=run_dir,
+            failed=True
         )
         sys.exit(1)
-
-    # Rendering succeeded — find the MP4
-    render_time_actual = time.perf_counter() - render_start
-    mp4_path       = _find_mp4(scene_path, SCENE_CLASS)
-    video_duration = _estimate_video_duration(mp4_path) if mp4_path else None
-
-    # Copy MP4 into run_dir as video.mp4 for easy access
-    if mp4_path:
-        dest_mp4 = os.path.join(run_dir, "video.mp4")
-        try:
-            shutil.copy2(mp4_path, dest_mp4)
-            # Prefer the copy in run_dir so the path is clean
-            mp4_path = dest_mp4
-        except Exception:
-            pass  # original path still valid
-
-    print(f"  Rendering completed.")
-    print(f"  Render time: {render_time:.2f} sec")
-    print()
-
-    # ------------------------------------------------------------------
-    # Final summary
-    # ------------------------------------------------------------------
-    total_time = time.perf_counter() - pipeline_start
-
-    _print_final_summary(
-        topic, language, conn_time, planning_time, build_time, val_time,
-        render_time, repair_time, total_time,
-        video_path=mp4_path,
-        video_duration=video_duration,
-        estimated_duration=estimated_dur,
-        run_dir=run_dir,
-        failed=False,
-    )
 
 
 if __name__ == "__main__":

@@ -54,7 +54,7 @@ from language_codes import (
 
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 MODEL        = "llama3:latest"
-TIMEOUT_SECS = 300   # increased from 120 — Hindi/multilingual planning can take longer
+TIMEOUT_SECS = 240   # allow up to 4 minutes for high-quality planning
 
 # ---------------------------------------------------------------------------
 # ALGORITHM CLASSIFICATION TABLE
@@ -160,128 +160,201 @@ def _detect_algorithm(topic: str) -> str | None:
 
 def build_planning_prompt(topic: str, language: LanguageCode) -> str:
     """
-    Build the Ollama planning prompt for the given topic and language.
-
-    The prompt explicitly instructs Ollama to generate the lesson DIRECTLY
-    in the selected language — not in English with a subsequent translation.
-    Technical identifiers, JSON keys, and internal metadata remain in English.
-
-    An "algorithm authority" block is injected when the topic matches a known
-    algorithm, preventing Ollama from substituting a different algorithm's
-    scenes (e.g. using array_search for insertion sort).
+    Build the Ollama planning prompt for topic and language.
+    
+    Generates a structured lesson with beats, where each beat contains:
+    - Educational narration in the selected language
+    - Concrete visual plan with specific actions
+    
+    Quality over speed — takes up to 240 seconds if needed.
     """
     lang_display = LANGUAGE_NAMES[language]
     lang_native  = LANGUAGE_NATIVE_NAMES[language]
     lang_code    = language.value
 
-    # Language instruction block
+    # Language instruction
     if language == LanguageCode.EN:
         language_instruction = (
             "Language: English (en)\n"
-            "Generate all user-facing text in English."
+            "Generate all narration and visual labels in English."
         )
     else:
         language_instruction = (
-            f"Selected language: {lang_display}\n"
-            f"Language code: {lang_code}\n"
+            f"Selected language: {lang_display} ({lang_code})\n"
             f"Native name: {lang_native}\n"
             "\n"
-            f"CRITICAL: Generate ALL user-facing text DIRECTLY in {lang_display}.\n"
-            "Do NOT generate in English first.\n"
-            "Do NOT translate from English.\n"
-            f"Write titles, scene text, narration, visual labels, and\n"
-            f"explanations natively in {lang_display} from the start.\n"
-            "Technical JSON keys, internal IDs, and enum values must remain\n"
-            "in English (ASCII). Only human-readable content is translated."
+            f"CRITICAL: Generate ALL narration and visual_text DIRECTLY in {lang_display}.\n"
+            f"Do NOT generate in English first. Do NOT translate.\n"
+            f"Write educational content natively in {lang_display}.\n"
+            "JSON keys, action names, and algorithm identifiers remain in English."
         )
 
-    # Algorithm authority block — injected when the topic is a known algorithm.
-    # This prevents Ollama from substituting another algorithm's scenes.
+    # Algorithm-specific guidance
     algo_family = _detect_algorithm(topic)
     if algo_family and algo_family in _ALGO_SCENE_GUIDANCE:
         guidance    = _ALGO_SCENE_GUIDANCE[algo_family]
-        preferred   = ", ".join(guidance["preferred"])
-        forbidden   = ", ".join(guidance["forbidden"]) if guidance["forbidden"] else "none"
         complexity  = guidance["complexity"]
         description = guidance["description"]
+        
+        # Build visual action examples specific to this algorithm
+        if algo_family == "insertion_sort":
+            visual_examples = """
+Example visual plans for INSERTION SORT:
+{
+  "visual": {
+    "type": "array",
+    "action": "show_array",
+    "data": {"values": [5, 2, 8, 3, 1]}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "select_key",
+    "data": {"index": 1}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "compare",
+    "data": {"compare_with": 0}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "shift",
+    "data": {"indices": [0]}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "insert",
+    "data": {"index": 0, "value": 2}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "mark_sorted",
+    "data": {"sorted_until": 2}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "show_complexity",
+    "data": {"value": "O(n²)"}
+  }
+}"""
+        elif algo_family == "binary_search":
+            visual_examples = """
+Example visual plans for BINARY SEARCH:
+{
+  "visual": {
+    "type": "array",
+    "action": "show_array",
+    "data": {"values": [1, 3, 5, 7, 9], "target": 5}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "check_middle",
+    "data": {"index": 2}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "found",
+    "data": {"index": 2}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "eliminate_half",
+    "data": {"start": 0, "end": 2}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "show_complexity",
+    "data": {"value": "O(log n)"}
+  }
+}"""
+        else:
+            visual_examples = """
+Use appropriate visual actions for the algorithm.
+For sorting: show_array, compare, swap, mark_sorted, show_complexity
+For searching: show_array, check_middle, found, eliminate_half"""
+        
         algorithm_instruction = (
             f"\n"
-            f"ALGORITHM AUTHORITY — READ CAREFULLY:\n"
-            f"The requested topic is: {topic}\n"
-            f"Algorithm identifier: {algo_family}\n"
-            f"This is: {description}\n"
-            f"The topic is the AUTHORITATIVE source for which algorithm to teach.\n"
-            f"Do NOT substitute another algorithm.\n"
-            f"Do NOT use binary-search scenes for a sorting topic.\n"
-            f"Do NOT use sorting scenes for a search topic.\n"
+            f"ALGORITHM: {algo_family}\n"
+            f"Description: {description}\n"
+            f"Time complexity: {complexity}\n"
             f"\n"
-            f"Preferred scene types for this topic: {preferred}\n"
-            f"Forbidden scene types for this topic: {forbidden}\n"
-            f"Correct time complexity for this topic: {complexity}\n"
-            f"Do NOT use O(log n) as the complexity for {topic} — that is WRONG.\n"
-            f"Use {complexity} for all complexity/formula scenes.\n"
+            f"{visual_examples}\n"
         )
     else:
         algorithm_instruction = (
-            f"\n"
-            f"ALGORITHM AUTHORITY:\n"
-            f"The requested topic is authoritative. Generate scenes that teach "
-            f"exactly: {topic}\n"
-            f"Do NOT substitute another algorithm or use scenes designed for "
-            f"a different algorithm.\n"
+            f"\nGenerate educational beats for: {topic}\n"
         )
 
     return (
-        "You are the lesson planner for LocalLearn AI.\n"
-        "Create a compact JSON lesson specification for a 60-90 second "
-        "educational animation about:\n"
+        "You are LocalLearn AI's high-quality lesson planner.\n"
+        f"Create a structured 60-120 second educational video about:\n"
         f"\n    {topic}\n\n"
         "---\n"
         f"{language_instruction}\n"
         "---\n"
         f"{algorithm_instruction}"
         "\n"
-        "Rules:\n"
-        "- Return ONLY valid JSON. No markdown. No ```json fences. "
-        "No explanation.\n"
-        "- Use 5-8 scenes maximum.\n"
-        "- Do NOT generate Python, Manim code, or animation instructions.\n"
-        "- Keep text fields SHORT (one sentence each).\n"
-        "- The \"language\" field MUST be set to the language code exactly.\n"
-        "\n"
-        "Allowed scene types and their required fields:\n"
-        '  {"type":"title",       "text":"...", "duration":4}\n'
-        '  {"type":"definition",  "text":"...", "duration":6}\n'
-        '  {"type":"explanation", "text":"...", "points":["...","..."], "duration":8}\n'
-        '  {"type":"array_search","values":[...], "target":N, "duration":30}\n'
-        '  {"type":"array_sort",  "values":[...], "duration":25}\n'
-        '  {"type":"formula",     "text":"...", "formula":"O(log n)", "duration":7}\n'
-        '  {"type":"comparison",  "items":[{"label":"A","value":"..."},{"label":"B","value":"..."}], "duration":8}\n'
-        '  {"type":"complexity",  "text":"...", "value":"O(log n)", "duration":7}\n'
-        '  {"type":"summary",     "text":"...", "points":["...","..."], "duration":8}\n'
-        "\n"
-        "Additionally include a top-level \"beats\" list with 3-6 beats.\n"
-        "Each beat is ONE small teaching unit:\n"
-        "{\n"
-        '  "id": "beat_1",\n'
-        '  "concept": "introduction",\n'
-        f'  "narration": "<one sentence in {lang_display}>",\n'
-        f'  "visual_text": "<short label in {lang_display}>",\n'
-        '  "importance": "normal"\n'
-        "}\n"
-        "Rules for beats:\n"
-        "- id and concept MUST be ASCII/English identifiers.\n"
-        f"- narration and visual_text MUST be in {lang_display}.\n"
-        '- importance is either "normal" or "key".\n'
-        "\n"
-        "Output format:\n"
+        "OUTPUT FORMAT — JSON ONLY:\n"
         "{\n"
         '  "topic": "...",\n'
         f'  "language": "{lang_code}",\n'
-        '  "target_duration": 75,\n'
-        '  "scenes": [ ... ],\n'
-        '  "beats": [ ... ]\n'
-        "}\n"
+        '  "algorithm": "insertion_sort",  // if applicable\n'
+        '  "target_duration": 90,\n'
+        '  "learning_objectives": ["...", "..."],\n'
+        '  "beats": [\n'
+        '    {\n'
+        '      "id": "beat_1",\n'
+        '      "concept": "introduction",\n'
+        f'      "narration": "<full sentence in {lang_display}>",\n'
+        f'      "visual_text": "<short label in {lang_display}>",\n'
+        '      "importance": "high",\n'
+        '      "visual": {\n'
+        '        "type": "array",  // or "text", "diagram"\n'
+        '        "action": "show_array",  // concrete action\n'
+        '        "data": {"values": [5, 2, 8, 3, 1]},  // action-specific\n'
+        '        "emphasis": [1]  // optional: indices to highlight\n'
+        '      }\n'
+        '    },\n'
+        '    // ... 6-12 beats total\n'
+        '  ]\n'
+        '}\n'
+        "\n"
+        "CRITICAL RULES:\n"
+        "1. Return ONLY valid JSON. No markdown. No fences. No explanation.\n"
+        "2. Generate 6-12 beats that teach the concept step-by-step.\n"
+        f"3. All narration and visual_text MUST be in {lang_display}.\n"
+        "4. Visual plans MUST be concrete:\n"
+        '   - Good: {"action": "select_key", "data": {"index": 1}}\n'
+        '   - Bad:  {"action": "show concept", "data": {}}\n'
+        "5. Each beat narration is ONE complete sentence.\n"
+        "6. Beat IDs: beat_1, beat_2, ...\n"
+        "7. Concepts: introduction, definition, step_1, step_2, ..., complexity, summary\n"
+        "8. Visual actions must match the algorithm (see examples above).\n"
+        f"9. For {topic}, use time complexity: {_ALGO_SCENE_GUIDANCE.get(algo_family, {}).get('complexity', 'appropriate value')}\n"
+        "10. Do NOT mix algorithms (e.g., binary search for sorting).\n"
+        "\n"
+        "Quality is more important than speed. Take your time.\n"
     )
 
 
@@ -394,10 +467,15 @@ def _validate(spec: dict) -> list:
     errors = []
     if "topic" not in spec and "title" not in spec:
         errors.append("Missing: topic or title")
-    if "scenes" not in spec:
-        errors.append("Missing: scenes list")
-    elif not isinstance(spec["scenes"], list) or len(spec["scenes"]) == 0:
-        errors.append("scenes must be a non-empty list")
+    
+    # New structure: beats (preferred)
+    # Legacy support: scenes (still allowed)
+    has_beats = "beats" in spec and isinstance(spec["beats"], list) and len(spec["beats"]) > 0
+    has_scenes = "scenes" in spec and isinstance(spec["scenes"], list) and len(spec["scenes"]) > 0
+    
+    if not has_beats and not has_scenes:
+        errors.append("Missing: beats or scenes list (must be non-empty)")
+    
     return errors
 
 
@@ -414,15 +492,37 @@ def _validate_beats(beats: list) -> list:
         if not isinstance(beat, dict):
             warnings.append(f"Beat {i}: not a dict")
             continue
+        
+        # Check required fields
         missing = required - beat.keys()
         if missing:
             warnings.append(f"Beat {i} ({beat.get('id','?')}): missing fields {missing}")
+        
+        # Check importance value
         imp = beat.get("importance")
         if imp and imp not in valid_importance:
             warnings.append(
                 f"Beat {i} ({beat.get('id','?')}): "
                 f"importance '{imp}' should be 'normal' or 'key'"
             )
+        
+        # Validate visual plan if present
+        visual = beat.get("visual")
+        if visual:
+            if not isinstance(visual, dict):
+                warnings.append(f"Beat {i} ({beat.get('id','?')}): visual must be a dict")
+                continue
+            
+            # Check required visual fields
+            if "type" not in visual:
+                warnings.append(f"Beat {i} ({beat.get('id','?')}): visual missing 'type'")
+            if "action" not in visual:
+                warnings.append(f"Beat {i} ({beat.get('id','?')}): visual missing 'action'")
+            if "data" not in visual:
+                warnings.append(f"Beat {i} ({beat.get('id','?')}): visual missing 'data'")
+            elif not isinstance(visual.get("data"), dict):
+                warnings.append(f"Beat {i} ({beat.get('id','?')}): visual.data must be a dict")
+    
     return warnings
 
 
@@ -665,7 +765,8 @@ def _normalise_spec(spec: dict, language: LanguageCode) -> dict:
     - Ensures ``target_duration`` exists.
     - Ensures ``beats`` exists (empty list if Ollama omitted it).
     - Injects ``language`` into every beat for downstream convenience.
-    - Coerces string-typed numeric scene fields to correct Python types.
+    - Coerces string-typed numeric fields in visual plans to correct Python types.
+    - Normalises ``importance`` values ("high"/"key" → "key", others → "normal").
     """
     # Normalise topic key
     if "topic" not in spec and "title" in spec:
@@ -677,21 +778,104 @@ def _normalise_spec(spec: dict, language: LanguageCode) -> dict:
 
     # Defaults
     if "target_duration" not in spec:
-        spec["target_duration"] = 75
-
-    # Coerce numeric scene fields (values, target, duration) to correct types.
-    # Must happen BEFORE algorithm validation so validators see clean data.
-    if "scenes" in spec and isinstance(spec["scenes"], list):
-        spec["scenes"] = _normalise_numeric_scene_data(spec["scenes"])
+        spec["target_duration"] = 90
 
     # Ensure beats list exists
     if "beats" not in spec or not isinstance(spec["beats"], list):
         spec["beats"] = []
 
-    # Inject language into each beat for downstream convenience
+    # Process each beat
     for beat in spec["beats"]:
-        if isinstance(beat, dict):
-            beat["language"] = language.value
+        if not isinstance(beat, dict):
+            continue
+        
+        # Inject language
+        beat["language"] = language.value
+        
+        # Normalise importance
+        imp = beat.get("importance", "normal")
+        if imp in ("high", "key"):
+            beat["importance"] = "key"
+        else:
+            beat["importance"] = "normal"
+        
+        # Process visual plan if present
+        visual = beat.get("visual")
+        if isinstance(visual, dict):
+            data = visual.get("data")
+            if isinstance(data, dict):
+                # Coerce numeric fields to correct types
+                
+                # values: list of strings → list of ints
+                if "values" in data and isinstance(data["values"], list):
+                    coerced = []
+                    for v in data["values"]:
+                        try:
+                            coerced.append(int(v))
+                        except (TypeError, ValueError):
+                            coerced.append(v)
+                    data["values"] = coerced
+                
+                # target: string → int
+                if "target" in data:
+                    try:
+                        data["target"] = int(data["target"])
+                    except (TypeError, ValueError):
+                        pass
+                
+                # index: string → int
+                if "index" in data:
+                    try:
+                        data["index"] = int(data["index"])
+                    except (TypeError, ValueError):
+                        pass
+                
+                # indices: list of strings → list of ints
+                if "indices" in data and isinstance(data["indices"], list):
+                    coerced = []
+                    for idx in data["indices"]:
+                        try:
+                            coerced.append(int(idx))
+                        except (TypeError, ValueError):
+                            coerced.append(idx)
+                    data["indices"] = coerced
+                
+                # compare_with: string → int
+                if "compare_with" in data:
+                    try:
+                        data["compare_with"] = int(data["compare_with"])
+                    except (TypeError, ValueError):
+                        pass
+                
+                # sorted_until: string → int
+                if "sorted_until" in data:
+                    try:
+                        data["sorted_until"] = int(data["sorted_until"])
+                    except (TypeError, ValueError):
+                        pass
+                
+                # start, end: strings → ints
+                for field in ("start", "end"):
+                    if field in data:
+                        try:
+                            data[field] = int(data[field])
+                        except (TypeError, ValueError):
+                            pass
+            
+            # emphasis: list of strings → list of ints
+            emphasis = visual.get("emphasis")
+            if isinstance(emphasis, list):
+                coerced = []
+                for e in emphasis:
+                    try:
+                        coerced.append(int(e))
+                    except (TypeError, ValueError):
+                        coerced.append(e)
+                visual["emphasis"] = coerced
+
+    # Legacy support: maintain scenes list if present
+    if "scenes" in spec and isinstance(spec["scenes"], list):
+        spec["scenes"] = _normalise_numeric_scene_data(spec["scenes"])
 
     return spec
 
