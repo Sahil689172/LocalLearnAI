@@ -23,6 +23,20 @@ SUBPHASE 1 ADDITIONS
       visual_text — the visible on-screen label in the selected language
       importance  — "normal" | "key"
   Beats are language-independent in structure but language-native in content.
+
+ROBUSTNESS ADDITIONS
+--------------------
+- _normalise_numeric_scene_data(): coerces string-typed numeric fields
+  (values, target, duration) to the correct Python types before any
+  downstream code sees them.
+- build_planning_prompt(): now contains an explicit "algorithm authority"
+  block so Ollama cannot substitute one algorithm for another, plus
+  concise per-algorithm scene guidance to keep scenes correct.
+- _validate_topic_scene_consistency(): detects binary-search-specific
+  scenes being generated for non-binary-search topics and either repairs
+  the spec deterministically or raises a clear ValueError.
+- _validate_complexity_consistency(): warns when an obviously wrong
+  complexity value is present for a known algorithm.
 """
 
 import json
@@ -43,6 +57,104 @@ MODEL        = "llama3:latest"
 TIMEOUT_SECS = 300   # increased from 120 — Hindi/multilingual planning can take longer
 
 # ---------------------------------------------------------------------------
+# ALGORITHM CLASSIFICATION TABLE
+#
+# Maps lowercase keyword substrings found in a topic string to a canonical
+# algorithm family name.  Used by both the prompt builder (to inject
+# algorithm-specific scene guidance) and the spec validator (to detect
+# scene-type mismatches).
+#
+# Keys   : lowercase substrings — checked with ``in topic.lower()``
+# Values : canonical family name (used as a dict key below)
+# ---------------------------------------------------------------------------
+
+_ALGO_KEYWORDS: list[tuple[str, str]] = [
+    # sorting
+    ("insertion sort",  "insertion_sort"),
+    ("selection sort",  "selection_sort"),
+    ("bubble sort",     "bubble_sort"),
+    ("merge sort",      "merge_sort"),
+    ("quick sort",      "quick_sort"),
+    ("quicksort",       "quick_sort"),
+    # searching
+    ("binary search",   "binary_search"),
+    ("linear search",   "linear_search"),
+]
+
+# Scene types that are ONLY valid for binary search.
+# Any other algorithm should not use these.
+_BINARY_SEARCH_ONLY_SCENES = {"array_search"}
+
+# Per-algorithm: which scene types are appropriate (advisory — not exhaustive).
+# scene_builder supports: title, definition, explanation, array_search,
+#   array_sort, formula, comparison, complexity, summary
+_ALGO_SCENE_GUIDANCE: dict[str, dict] = {
+    "insertion_sort": {
+        "preferred":    ["title", "definition", "explanation",
+                         "array_sort", "complexity", "summary"],
+        "forbidden":    ["array_search"],
+        "complexity":   "O(n^2)",
+        "description":  "insertion sort — builds sorted array one element at a time",
+    },
+    "selection_sort": {
+        "preferred":    ["title", "definition", "explanation",
+                         "array_sort", "complexity", "summary"],
+        "forbidden":    ["array_search"],
+        "complexity":   "O(n^2)",
+        "description":  "selection sort — repeatedly selects the minimum element",
+    },
+    "bubble_sort": {
+        "preferred":    ["title", "definition", "explanation",
+                         "array_sort", "complexity", "summary"],
+        "forbidden":    ["array_search"],
+        "complexity":   "O(n^2)",
+        "description":  "bubble sort — repeatedly swaps adjacent out-of-order elements",
+    },
+    "merge_sort": {
+        "preferred":    ["title", "definition", "explanation",
+                         "complexity", "summary"],
+        "forbidden":    ["array_search"],
+        "complexity":   "O(n log n)",
+        "description":  "merge sort — divide-and-conquer, merges sorted halves",
+    },
+    "quick_sort": {
+        "preferred":    ["title", "definition", "explanation",
+                         "complexity", "summary"],
+        "forbidden":    ["array_search"],
+        "complexity":   "O(n log n)",
+        "description":  "quick sort — divide-and-conquer using a pivot element",
+    },
+    "binary_search": {
+        "preferred":    ["title", "definition", "explanation",
+                         "array_search", "complexity", "summary"],
+        "forbidden":    [],
+        "complexity":   "O(log n)",
+        "description":  "binary search — halves the search space on each step",
+    },
+    "linear_search": {
+        "preferred":    ["title", "definition", "explanation",
+                         "complexity", "summary"],
+        "forbidden":    ["array_search"],
+        "complexity":   "O(n)",
+        "description":  "linear search — scans each element sequentially",
+    },
+}
+
+
+def _detect_algorithm(topic: str) -> str | None:
+    """
+    Return the canonical algorithm family for *topic*, or None if unknown.
+
+    Checks are ordered from most-specific to least-specific so that
+    "insertion sort" is matched before a hypothetical bare "sort".
+    """
+    t = topic.lower()
+    for keyword, family in _ALGO_KEYWORDS:
+        if keyword in t:
+            return family
+    return None
+
+# ---------------------------------------------------------------------------
 # PROMPT
 # ---------------------------------------------------------------------------
 
@@ -53,14 +165,16 @@ def build_planning_prompt(topic: str, language: LanguageCode) -> str:
     The prompt explicitly instructs Ollama to generate the lesson DIRECTLY
     in the selected language — not in English with a subsequent translation.
     Technical identifiers, JSON keys, and internal metadata remain in English.
+
+    An "algorithm authority" block is injected when the topic matches a known
+    algorithm, preventing Ollama from substituting a different algorithm's
+    scenes (e.g. using array_search for insertion sort).
     """
     lang_display = LANGUAGE_NAMES[language]
     lang_native  = LANGUAGE_NATIVE_NAMES[language]
     lang_code    = language.value
 
-    # Compose the language instruction block that is injected into the prompt.
-    # For English we use a neutral phrasing; for all other languages we are
-    # explicit that the model must write in that language directly.
+    # Language instruction block
     if language == LanguageCode.EN:
         language_instruction = (
             "Language: English (en)\n"
@@ -81,6 +195,42 @@ def build_planning_prompt(topic: str, language: LanguageCode) -> str:
             "in English (ASCII). Only human-readable content is translated."
         )
 
+    # Algorithm authority block — injected when the topic is a known algorithm.
+    # This prevents Ollama from substituting another algorithm's scenes.
+    algo_family = _detect_algorithm(topic)
+    if algo_family and algo_family in _ALGO_SCENE_GUIDANCE:
+        guidance    = _ALGO_SCENE_GUIDANCE[algo_family]
+        preferred   = ", ".join(guidance["preferred"])
+        forbidden   = ", ".join(guidance["forbidden"]) if guidance["forbidden"] else "none"
+        complexity  = guidance["complexity"]
+        description = guidance["description"]
+        algorithm_instruction = (
+            f"\n"
+            f"ALGORITHM AUTHORITY — READ CAREFULLY:\n"
+            f"The requested topic is: {topic}\n"
+            f"Algorithm identifier: {algo_family}\n"
+            f"This is: {description}\n"
+            f"The topic is the AUTHORITATIVE source for which algorithm to teach.\n"
+            f"Do NOT substitute another algorithm.\n"
+            f"Do NOT use binary-search scenes for a sorting topic.\n"
+            f"Do NOT use sorting scenes for a search topic.\n"
+            f"\n"
+            f"Preferred scene types for this topic: {preferred}\n"
+            f"Forbidden scene types for this topic: {forbidden}\n"
+            f"Correct time complexity for this topic: {complexity}\n"
+            f"Do NOT use O(log n) as the complexity for {topic} — that is WRONG.\n"
+            f"Use {complexity} for all complexity/formula scenes.\n"
+        )
+    else:
+        algorithm_instruction = (
+            f"\n"
+            f"ALGORITHM AUTHORITY:\n"
+            f"The requested topic is authoritative. Generate scenes that teach "
+            f"exactly: {topic}\n"
+            f"Do NOT substitute another algorithm or use scenes designed for "
+            f"a different algorithm.\n"
+        )
+
     return (
         "You are the lesson planner for LocalLearn AI.\n"
         "Create a compact JSON lesson specification for a 60-90 second "
@@ -89,6 +239,7 @@ def build_planning_prompt(topic: str, language: LanguageCode) -> str:
         "---\n"
         f"{language_instruction}\n"
         "---\n"
+        f"{algorithm_instruction}"
         "\n"
         "Rules:\n"
         "- Return ONLY valid JSON. No markdown. No ```json fences. "
@@ -276,6 +427,231 @@ def _validate_beats(beats: list) -> list:
 
 
 # ---------------------------------------------------------------------------
+# NUMERIC SCENE DATA NORMALISATION
+# ---------------------------------------------------------------------------
+
+# Scene types that carry numeric array/target fields
+_NUMERIC_ARRAY_SCENES = {"array_search", "array_sort"}
+
+
+def _normalise_numeric_scene_data(scenes: list) -> list:
+    """
+    Coerce string-typed numeric fields in scene dicts to correct Python types.
+
+    Ollama occasionally returns numeric values as JSON strings, e.g.:
+        "values": ["5", "2", "8"]   instead of  "values": [5, 2, 8]
+        "target": "3"               instead of  "target": 3
+
+    This helper fixes those in-place and returns the same list.
+
+    Only fields that are semantically numeric are touched:
+        - ``values``   in array_search / array_sort  → list[int]
+        - ``target``   in array_search               → int
+        - ``duration`` in any scene                  → float
+
+    Normal textual fields (text, heading, narration, …) are never touched.
+    """
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
+
+        scene_type = scene.get("type", "")
+
+        # --- duration (every scene type) ---
+        if "duration" in scene:
+            try:
+                scene["duration"] = float(scene["duration"])
+            except (TypeError, ValueError):
+                pass  # leave malformed value; validator will catch it
+
+        # --- numeric array fields ---
+        if scene_type in _NUMERIC_ARRAY_SCENES:
+            # values: coerce each element to int
+            if "values" in scene and isinstance(scene["values"], list):
+                coerced = []
+                for v in scene["values"]:
+                    try:
+                        coerced.append(int(v))
+                    except (TypeError, ValueError):
+                        coerced.append(v)  # keep as-is; validator will catch it
+                scene["values"] = coerced
+
+            # target: coerce to int
+            if "target" in scene:
+                try:
+                    scene["target"] = int(scene["target"])
+                except (TypeError, ValueError):
+                    pass
+
+    return scenes
+
+
+# ---------------------------------------------------------------------------
+# ALGORITHM / TOPIC SCENE-MISMATCH VALIDATION
+# ---------------------------------------------------------------------------
+
+def _validate_topic_scene_consistency(spec: dict) -> list:
+    """
+    Detect scenes that are algorithmically inconsistent with the topic.
+
+    Returns a list of error strings.  An empty list means the spec is clean.
+
+    Current checks:
+    - A sorting topic (insertion/selection/bubble/merge/quick sort) must NOT
+      contain ``array_search`` scenes.  Those scenes implement binary search
+      and would silently render the wrong algorithm.
+    """
+    topic      = spec.get("topic", "")
+    scenes     = spec.get("scenes", [])
+    algo_family = _detect_algorithm(topic)
+    errors     = []
+
+    if algo_family is None:
+        return errors   # unknown algorithm — no opinion
+
+    guidance = _ALGO_SCENE_GUIDANCE.get(algo_family, {})
+    forbidden = set(guidance.get("forbidden", []))
+
+    if not forbidden:
+        return errors
+
+    bad_scenes = [
+        (i + 1, s.get("type"))
+        for i, s in enumerate(scenes)
+        if isinstance(s, dict) and s.get("type") in forbidden
+    ]
+
+    if bad_scenes:
+        bad_desc = ", ".join(f"scene {n} ({t!r})" for n, t in bad_scenes)
+        errors.append(
+            f"Topic '{topic}' ({algo_family}) contains forbidden scene type(s): "
+            f"{bad_desc}. "
+            f"These scene types are not valid for {algo_family}. "
+            f"Forbidden types for this algorithm: {sorted(forbidden)}"
+        )
+
+    return errors
+
+
+def _repair_topic_scene_consistency(spec: dict) -> tuple[dict, list]:
+    """
+    Attempt a deterministic repair of scene-type mismatches.
+
+    Strategy: replace forbidden scene types with ``array_sort`` for sorting
+    algorithms (the correct scene type for sorting visualisation), keeping
+    the values field if present.
+
+    Returns (repaired_spec, list_of_repair_messages).
+    """
+    topic       = spec.get("topic", "")
+    algo_family = _detect_algorithm(topic)
+    messages    = []
+
+    if algo_family is None:
+        return spec, messages
+
+    guidance  = _ALGO_SCENE_GUIDANCE.get(algo_family, {})
+    forbidden = set(guidance.get("forbidden", []))
+
+    # Sorting algorithms: safe replacement is array_sort
+    sorting_families = {
+        "insertion_sort", "selection_sort", "bubble_sort",
+        "merge_sort", "quick_sort",
+    }
+
+    for i, scene in enumerate(spec.get("scenes", [])):
+        if not isinstance(scene, dict):
+            continue
+        stype = scene.get("type")
+        if stype in forbidden:
+            if algo_family in sorting_families:
+                # Keep values if present, drop target (not needed for sort)
+                repaired_scene = {
+                    "type":     "array_sort",
+                    "duration": scene.get("duration", 25),
+                }
+                if "values" in scene:
+                    repaired_scene["values"] = scene["values"]
+                spec["scenes"][i] = repaired_scene
+                messages.append(
+                    f"  [REPAIR] Scene {i + 1}: replaced forbidden '{stype}' "
+                    f"with 'array_sort' for topic '{topic}'"
+                )
+            else:
+                # For non-sorting algorithms, replace with explanation
+                spec["scenes"][i] = {
+                    "type":     "explanation",
+                    "text":     scene.get("text", topic),
+                    "points":   [],
+                    "duration": scene.get("duration", 8),
+                }
+                messages.append(
+                    f"  [REPAIR] Scene {i + 1}: replaced forbidden '{stype}' "
+                    f"with 'explanation' for topic '{topic}'"
+                )
+
+    return spec, messages
+
+
+# ---------------------------------------------------------------------------
+# COMPLEXITY CONSISTENCY CHECK
+# ---------------------------------------------------------------------------
+
+def _validate_complexity_consistency(spec: dict) -> list:
+    """
+    Warn (non-fatal) when a formula/complexity scene carries an obviously
+    incorrect complexity value for the detected algorithm.
+
+    Returns a list of warning strings (empty = all clear).
+    """
+    topic       = spec.get("topic", "")
+    algo_family = _detect_algorithm(topic)
+    warnings    = []
+
+    if algo_family is None:
+        return warnings
+
+    guidance         = _ALGO_SCENE_GUIDANCE.get(algo_family, {})
+    expected_complexity = guidance.get("complexity")
+    if not expected_complexity:
+        return warnings
+
+    # Pairs of (algo_family, wrong_complexity) that are clearly wrong
+    # and should be flagged.
+    _WRONG_COMPLEXITY: dict[str, list[str]] = {
+        "insertion_sort": ["O(log n)", "O(log n) "],
+        "selection_sort": ["O(log n)"],
+        "bubble_sort":    ["O(log n)"],
+        "merge_sort":     ["O(n^2)", "O(log n)"],
+        "quick_sort":     ["O(n^2)", "O(log n)"],
+        "linear_search":  ["O(log n)"],
+    }
+
+    wrong_values = _WRONG_COMPLEXITY.get(algo_family, [])
+    if not wrong_values:
+        return warnings
+
+    for i, scene in enumerate(spec.get("scenes", [])):
+        if not isinstance(scene, dict):
+            continue
+        stype = scene.get("type")
+        if stype not in ("formula", "complexity"):
+            continue
+
+        # Check both "formula" and "value" fields
+        for field in ("formula", "value"):
+            val = scene.get(field, "").strip()
+            if val in wrong_values:
+                warnings.append(
+                    f"  [WARN] Scene {i + 1} ({stype}): "
+                    f"complexity '{val}' is incorrect for {algo_family}. "
+                    f"Expected: {expected_complexity}"
+                )
+
+    return warnings
+
+
+# ---------------------------------------------------------------------------
 # SPEC NORMALISATION
 # ---------------------------------------------------------------------------
 
@@ -289,6 +665,7 @@ def _normalise_spec(spec: dict, language: LanguageCode) -> dict:
     - Ensures ``target_duration`` exists.
     - Ensures ``beats`` exists (empty list if Ollama omitted it).
     - Injects ``language`` into every beat for downstream convenience.
+    - Coerces string-typed numeric scene fields to correct Python types.
     """
     # Normalise topic key
     if "topic" not in spec and "title" in spec:
@@ -301,6 +678,11 @@ def _normalise_spec(spec: dict, language: LanguageCode) -> dict:
     # Defaults
     if "target_duration" not in spec:
         spec["target_duration"] = 75
+
+    # Coerce numeric scene fields (values, target, duration) to correct types.
+    # Must happen BEFORE algorithm validation so validators see clean data.
+    if "scenes" in spec and isinstance(spec["scenes"], list):
+        spec["scenes"] = _normalise_numeric_scene_data(spec["scenes"])
 
     # Ensure beats list exists
     if "beats" not in spec or not isinstance(spec["beats"], list):
@@ -366,7 +748,28 @@ def generate_lesson_plan(
 
     spec = _normalise_spec(spec, lang)
 
-    # Non-fatal beat validation — print warnings but do not abort
+    # --- Algorithm / topic scene-mismatch check ---
+    # First attempt a deterministic repair; if it cannot be fixed, fail.
+    consistency_errors = _validate_topic_scene_consistency(spec)
+    if consistency_errors:
+        spec, repair_messages = _repair_topic_scene_consistency(spec)
+        for msg in repair_messages:
+            print(msg)
+        # Re-validate after repair
+        remaining_errors = _validate_topic_scene_consistency(spec)
+        if remaining_errors:
+            raise ValueError(
+                "Lesson spec contains scenes inconsistent with the topic "
+                "and could not be automatically repaired:\n  "
+                + "\n  ".join(remaining_errors)
+            )
+
+    # --- Complexity consistency (non-fatal warnings) ---
+    complexity_warnings = _validate_complexity_consistency(spec)
+    for w in complexity_warnings:
+        print(w)
+
+    # --- Beat structure warnings (non-fatal) ---
     beat_warnings = _validate_beats(spec["beats"])
     for w in beat_warnings:
         print(f"  [WARN] Beat validation: {w}")
