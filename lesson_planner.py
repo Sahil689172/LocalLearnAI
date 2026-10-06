@@ -40,7 +40,7 @@ from language_codes import (
 
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 MODEL        = "llama3:latest"
-TIMEOUT_SECS = 120   # compact JSON should arrive well within 2 minutes
+TIMEOUT_SECS = 300   # increased from 120 — Hindi/multilingual planning can take longer
 
 # ---------------------------------------------------------------------------
 # PROMPT
