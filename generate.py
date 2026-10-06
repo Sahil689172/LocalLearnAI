@@ -3,6 +3,15 @@ LocalLearn AI - Full Pipeline (One Command)
 --------------------------------------------
 Usage:
     python generate.py "Explain Binary Search"
+    python generate.py "Explain Binary Search" --language hi
+    python generate.py "Explain Binary Search" --language ta
+
+Supported language codes:
+    en  English (default)
+    hi  Hindi
+    ta  Tamil
+    te  Telugu
+    mr  Marathi
 
 Full pipeline runs automatically:
     [1/5] Connect to Ollama + generate compact lesson spec
@@ -31,6 +40,12 @@ import datetime
 from lesson_planner import generate_lesson_plan
 from scene_builder  import build_manim_code
 from validator      import validate_and_estimate
+from language_codes import (
+    LanguageCode,
+    DEFAULT_LANGUAGE,
+    LANGUAGE_NAMES,
+    validate_language,
+)
 
 # ---------------------------------------------------------------------------
 # CONFIGURATION
@@ -266,13 +281,15 @@ def _attempt_repair(code: str, syntax_err) -> tuple:
 # DISPLAY
 # ---------------------------------------------------------------------------
 
-def _banner(topic: str) -> None:
+def _banner(topic: str, language: LanguageCode) -> None:
+    lang_display = LANGUAGE_NAMES[language]
     print()
     print(SEP)
     print("  LocalLearn AI")
     print(SEP)
-    print(f"  Topic: {topic}")
-    print(f"  Model: {MODEL}")
+    print(f"  Topic:    {topic}")
+    print(f"  Language: {lang_display} ({language.value})")
+    print(f"  Model:    {MODEL}")
     print(SEP)
     print()
 
@@ -283,6 +300,7 @@ def _step(n: int, total: int, label: str) -> None:
 
 def _print_final_summary(
     topic: str,
+    language: LanguageCode,
     conn_time: float,
     planning_time: float,
     build_time: float,
@@ -296,6 +314,7 @@ def _print_final_summary(
     run_dir: str,
     failed: bool = False,
 ) -> None:
+    lang_display = LANGUAGE_NAMES[language]
     print()
     print(SEP)
     if failed:
@@ -305,6 +324,7 @@ def _print_final_summary(
     print(SEP)
     print()
     print(f"  Topic:              {topic}")
+    print(f"  Language:           {lang_display} ({language.value})")
     print()
     print(f"  Ollama connection:  {conn_time:.2f} sec")
     print(f"  Lesson planning:    {planning_time:.2f} sec")
@@ -349,16 +369,41 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Arguments
     # ------------------------------------------------------------------
-    if len(sys.argv) < 2 or not sys.argv[1].strip():
+    # Usage:
+    #   python generate.py "topic"
+    #   python generate.py "topic" --language hi
+    # ------------------------------------------------------------------
+    args = sys.argv[1:]
+
+    if not args or not args[0].strip():
         print()
-        print("  Usage:   python generate.py \"<topic>\"")
-        print("  Example: python generate.py \"Explain Binary Search\"")
+        print("  Usage:   python generate.py \"<topic>\" [--language <code>]")
+        print("  Example: python generate.py \"Explain Binary Search\" --language hi")
+        print()
+        print("  Supported language codes:")
+        for lc in LanguageCode:
+            default_marker = "  (default)" if lc == DEFAULT_LANGUAGE else ""
+            print(f"    {lc.value}  {LANGUAGE_NAMES[lc]}{default_marker}")
         print()
         sys.exit(1)
 
-    topic = sys.argv[1].strip()
+    topic = args[0].strip()
 
-    _banner(topic)
+    # Parse optional --language flag
+    language = DEFAULT_LANGUAGE
+    if "--language" in args:
+        lang_idx = args.index("--language")
+        if lang_idx + 1 >= len(args):
+            print("\n  [ERROR] --language requires a value, e.g. --language hi\n")
+            sys.exit(1)
+        lang_code = args[lang_idx + 1]
+        try:
+            language = validate_language(lang_code)
+        except ValueError as exc:
+            print(f"\n  [ERROR] {exc}\n")
+            sys.exit(1)
+
+    _banner(topic, language)
 
     # Create the unique output directory for this run
     run_dir = _make_run_dir(topic)
@@ -383,7 +428,7 @@ def main() -> None:
 
     conn_start = time.perf_counter()
     try:
-        lesson_spec, planning_time = generate_lesson_plan(topic)
+        lesson_spec, planning_time = generate_lesson_plan(topic, language=language)
     except RuntimeError as exc:
         print(f"\n  [ERROR] {exc}")
         sys.exit(1)
@@ -482,7 +527,7 @@ def main() -> None:
             print(f"  Invalid code saved: {inv_path}")
             total = time.perf_counter() - pipeline_start
             _print_final_summary(
-                topic, conn_time, planning_time, build_time, val_time,
+                topic, language, conn_time, planning_time, build_time, val_time,
                 render_time, repair_time, total,
                 video_path=None, video_duration=None,
                 estimated_duration=estimated_dur, run_dir=run_dir, failed=True
@@ -554,7 +599,7 @@ def main() -> None:
         print()
         total = time.perf_counter() - pipeline_start
         _print_final_summary(
-            topic, conn_time, planning_time, build_time, val_time,
+            topic, language, conn_time, planning_time, build_time, val_time,
             render_time, repair_time, total,
             video_path=None, video_duration=None,
             estimated_duration=estimated_dur, run_dir=run_dir, failed=True
@@ -586,7 +631,7 @@ def main() -> None:
     total_time = time.perf_counter() - pipeline_start
 
     _print_final_summary(
-        topic, conn_time, planning_time, build_time, val_time,
+        topic, language, conn_time, planning_time, build_time, val_time,
         render_time, repair_time, total_time,
         video_path=mp4_path,
         video_duration=video_duration,

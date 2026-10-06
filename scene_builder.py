@@ -7,6 +7,22 @@ Ollama decides WHAT to show.
 This module decides HOW to implement it in Manim.
 
 No LLM calls are made here — this is pure deterministic Python.
+
+SUBPHASE 1 ADDITIONS
+---------------------
+The builder now reads the ``language`` field from the LessonSpec and uses
+it to select language-aware fallback strings for the few places where the
+scene builder previously hard-coded English text (e.g. the "Binary Search"
+heading inside array_search, the "Bubble Sort" heading inside array_sort,
+and the "FOUND!" label).
+
+All user-facing text still comes primarily from the spec fields supplied
+by Ollama (title, text, heading, points, etc.) — which are already in the
+selected language.  The fallback strings here are safety nets for cases
+where a field is absent.
+
+Animation logic is NOT changed.  Only the fallback/label strings are
+language-aware.
 """
 
 # ---------------------------------------------------------------------------
@@ -22,6 +38,84 @@ No LLM calls are made here — this is pure deterministic Python.
 #   complexity     heading + big complexity label + brief note
 #   summary        heading + bullet points (recap style)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# LANGUAGE-AWARE FALLBACK LABELS
+#
+# These are ONLY used when a scene does not supply its own text field.
+# They cover the small set of strings that were previously hard-coded in
+# English inside the scene builder.  All actual lesson content still comes
+# from the LessonSpec fields produced by Ollama (already in the target lang).
+# ---------------------------------------------------------------------------
+
+# Keys: language code → label
+_LABELS: dict[str, dict[str, str]] = {
+    # heading shown inside the array_search scene
+    "binary_search_heading": {
+        "en": "Binary Search",
+        "hi": "बाइनरी सर्च",
+        "ta": "இருமட தேடல்",
+        "te": "బైనరీ సెర్చ్",
+        "mr": "बायनरी शोध",
+    },
+    # heading shown inside the array_sort scene
+    "bubble_sort_heading": {
+        "en": "Bubble Sort",
+        "hi": "बबल सॉर्ट",
+        "ta": "குமிழி வரிசை",
+        "te": "బబుల్ సార్ట్",
+        "mr": "बबल सॉर्ट",
+    },
+    # label shown when the target is found
+    "found_label": {
+        "en": "FOUND!",
+        "hi": "मिल गया!",
+        "ta": "கண்டுபிடிக்கப்பட்டது!",
+        "te": "దొరికింది!",
+        "mr": "सापडले!",
+    },
+    # label shown in the outro
+    "outro_tagline": {
+        "en": "Learn  ·  Visualize  ·  Understand",
+        "hi": "सीखें  ·  देखें  ·  समझें",
+        "ta": "கற்றல்  ·  காட்சி  ·  புரிதல்",
+        "te": "నేర్చుకోండి  ·  చూడండి  ·  అర్థం చేసుకోండి",
+        "mr": "शिका  ·  पाहा  ·  समजा",
+    },
+    # "Sorted!" shown at the end of bubble sort
+    "sorted_label": {
+        "en": "Sorted!",
+        "hi": "क्रमबद्ध!",
+        "ta": "வரிசைப்படுத்தப்பட்டது!",
+        "te": "క్రమబద్ధీకరించబడింది!",
+        "mr": "क्रमवारी लावले!",
+    },
+    # prefix for "Target: N" label
+    "target_prefix": {
+        "en": "Target",
+        "hi": "लक्ष्य",
+        "ta": "இலக்கு",
+        "te": "లక్ష్యం",
+        "mr": "लक्ष्य",
+    },
+}
+
+# Default language used when the spec does not carry a language field
+_DEFAULT_LANG = "en"
+
+
+def _label(key: str, lang: str) -> str:
+    """
+    Return the label for ``key`` in ``lang``, falling back to English.
+
+    Parameters
+    ----------
+    key  : one of the keys in ``_LABELS``
+    lang : language code string, e.g. "hi"
+    """
+    table = _LABELS.get(key, {})
+    return table.get(lang) or table.get(_DEFAULT_LANG, key)
+
 
 # ---------------------------------------------------------------------------
 # CODE GENERATION HELPERS
@@ -129,10 +223,15 @@ def _scene_explanation(scene: dict, idx: int) -> str:
     return "\n".join(lines)
 
 
-def _scene_array_search(scene: dict, idx: int) -> str:
+def _scene_array_search(scene: dict, idx: int, lang: str = "en") -> str:
     values = scene.get("values", [10, 20, 30, 40, 50, 60, 70])
     target = scene.get("target", values[len(values) // 2])
     dur    = float(scene.get("duration", 30))
+
+    # Language-aware labels
+    heading      = scene.get("heading", _label("binary_search_heading", lang))
+    found_text   = _label("found_label", lang)
+    target_prefix = _label("target_prefix", lang)
 
     # Build binary search steps
     steps  = _binary_search_steps(values, target)
@@ -143,7 +242,7 @@ def _scene_array_search(scene: dict, idx: int) -> str:
         f"        _bs_vals = {values}",
         f"        _bs_tgt  = {target}",
         f"",
-        f"        _hd = Text('Binary Search', font_size=36)",
+        f"        _hd = Text({repr(heading)}, font_size=36)",
         f"        _hd.to_edge(UP, buff=0.35)",
         f"        self.play(Write(_hd), run_time=0.8)",
         f"",
@@ -161,7 +260,7 @@ def _scene_array_search(scene: dict, idx: int) -> str:
         f"            *[FadeIn(c, shift=UP*0.15) for c in _cells],",
         f"            lag_ratio=0.1), run_time=1.2)",
         f"",
-        f"        _tgt_lbl = Text(f'Target: {{_bs_tgt}}', font_size=28)",
+        f"        _tgt_lbl = Text(f'{target_prefix}: {{_bs_tgt}}', font_size=28)",
         f"        _tgt_lbl.to_edge(DOWN, buff=0.5)",
         f"        self.play(Write(_tgt_lbl), run_time=0.7)",
         f"        self.wait(1)",
@@ -193,7 +292,7 @@ def _scene_array_search(scene: dict, idx: int) -> str:
 
         if found:
             lines += [
-                f"        _found_lbl = Text('FOUND!', font_size=32, color=GREEN)",
+                f"        _found_lbl = Text({repr(found_text)}, font_size=32, color=GREEN)",
                 f"        _found_lbl.next_to(_cells[{mid}], UP, buff=0.4)",
                 f"        self.play(Write(_found_lbl), run_time=0.6)",
                 f"        self.play(Indicate(_cells[{mid}], scale_factor=1.18, color=GREEN))",
@@ -257,9 +356,13 @@ def _binary_search_steps(values: list, target: int) -> list:
     return steps
 
 
-def _scene_array_sort(scene: dict, idx: int) -> str:
+def _scene_array_sort(scene: dict, idx: int, lang: str = "en") -> str:
     values = scene.get("values", [5, 3, 8, 1, 9, 2, 7, 4, 6])
     dur    = float(scene.get("duration", 25))
+
+    # Language-aware labels
+    heading      = scene.get("heading", _label("bubble_sort_heading", lang))
+    sorted_text  = _label("sorted_label", lang)
 
     # Limit to 8 elements to keep animation manageable
     values = values[:8]
@@ -269,7 +372,7 @@ def _scene_array_sort(scene: dict, idx: int) -> str:
         f"        _sort_vals = {values}",
         f"        _svals = list(_sort_vals)",
         f"",
-        f"        _hd = Text('Bubble Sort', font_size=36)",
+        f"        _hd = Text({repr(heading)}, font_size=36)",
         f"        _hd.to_edge(UP, buff=0.35)",
         f"        self.play(Write(_hd), run_time=0.8)",
         f"",
@@ -307,7 +410,7 @@ def _scene_array_sort(scene: dict, idx: int) -> str:
         f"                break",
         f"            _passes += 1",
         f"",
-        f"        _done = Text('Sorted!', font_size=32, color=GREEN)",
+        f"        _done = Text({repr(sorted_text)}, font_size=32, color=GREEN)",
         f"        _done.to_edge(DOWN, buff=0.5)",
         f"        self.play(Write(_done), run_time=0.6)",
         f"        self.wait(1.5)",
@@ -434,16 +537,19 @@ def _scene_summary(scene: dict, idx: int) -> str:
 # ---------------------------------------------------------------------------
 
 _SCENE_BUILDERS = {
-    "title":       _scene_title,
-    "definition":  _scene_definition,
-    "explanation": _scene_explanation,
+    "title":        _scene_title,
+    "definition":   _scene_definition,
+    "explanation":  _scene_explanation,
     "array_search": _scene_array_search,
-    "array_sort":  _scene_array_sort,
-    "formula":     _scene_formula,
-    "comparison":  _scene_comparison,
-    "complexity":  _scene_complexity,
-    "summary":     _scene_summary,
+    "array_sort":   _scene_array_sort,
+    "formula":      _scene_formula,
+    "comparison":   _scene_comparison,
+    "complexity":   _scene_complexity,
+    "summary":      _scene_summary,
 }
+
+# Scene types that accept a ``lang`` keyword argument
+_LANG_AWARE_BUILDERS = {"array_search", "array_sort"}
 
 # ---------------------------------------------------------------------------
 # PUBLIC API
@@ -453,11 +559,19 @@ def build_manim_code(lesson_spec: dict) -> str:
     """
     Convert a LessonSpec dict into a complete Manim Python script.
 
+    Reads ``lesson_spec["language"]`` (defaults to "en") and passes it to
+    language-aware scene builders so that fallback labels are rendered in the
+    correct language.
+
     Returns:
         Python source code as a string (no LLM call — purely deterministic).
     """
-    topic    = lesson_spec.get("topic", lesson_spec.get("title", "Topic"))
-    scenes   = lesson_spec.get("scenes", [])
+    topic  = lesson_spec.get("topic", lesson_spec.get("title", "Topic"))
+    scenes = lesson_spec.get("scenes", [])
+    lang   = lesson_spec.get("language", _DEFAULT_LANG)
+
+    # Outro tagline in the selected language
+    outro_tagline = _label("outro_tagline", lang)
 
     body_parts = []
     for idx, scene in enumerate(scenes, start=1):
@@ -471,6 +585,8 @@ def build_manim_code(lesson_spec: dict) -> str:
             fallback.setdefault("heading", scene.get("type", "").replace("_", " ").title())
             fallback.setdefault("text",    scene.get("text", ""))
             body_parts.append(_scene_definition(fallback, idx))
+        elif scene_type in _LANG_AWARE_BUILDERS:
+            body_parts.append(builder(scene, idx, lang=lang))
         else:
             body_parts.append(builder(scene, idx))
 
@@ -484,6 +600,7 @@ def build_manim_code(lesson_spec: dict) -> str:
         "\n"
         f"    # Generated by LocalLearn AI\n"
         f"    # Topic: {topic}\n"
+        f"    # Language: {lang}\n"
         "\n"
         "    def construct(self):\n"
         "\n"
@@ -491,7 +608,7 @@ def build_manim_code(lesson_spec: dict) -> str:
         "\n"
         "        # --- Outro ---\n"
         "        _outro = Text('LocalLearn AI', font_size=48)\n"
-        "        _outro_sub = Text('Learn  ·  Visualize  ·  Understand', font_size=26)\n"
+        f"        _outro_sub = Text({repr(outro_tagline)}, font_size=26)\n"
         "        _outro_sub.next_to(_outro, DOWN, buff=0.3)\n"
         "        self.play(Write(_outro), run_time=1.0)\n"
         "        self.play(FadeIn(_outro_sub), run_time=0.8)\n"
