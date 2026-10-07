@@ -341,7 +341,7 @@ For searching: show_array, check_middle, found, eliminate_half"""
         '}\n'
         "\n"
         "CRITICAL RULES:\n"
-        "1. Return ONLY valid JSON. No markdown. No fences. No explanation.\n"
+        "1. Return ONLY valid JSON. No markdown fences. No ```json. No explanatory text before or after. The very first character of your response must be { and the very last must be }.\n"
         "2. Generate 6-12 beats that teach the concept step-by-step.\n"
         f"3. All narration and visual_text MUST be in {lang_display}.\n"
         "4. Visual plans MUST be concrete:\n"
@@ -368,7 +368,7 @@ def _call_ollama(prompt: str) -> str:
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_predict": 800,   # slightly larger than before to fit beats
+            "num_predict": 2400,  # beats+visual plans need ~1500-2500 tokens
             "temperature": 0.2,
         },
     }
@@ -421,42 +421,101 @@ def _call_ollama(prompt: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _extract_json(raw: str) -> dict:
+    """
+    Robustly extract the outermost JSON object from an Ollama response.
+
+    Handles:
+    - Pure JSON
+    - JSON wrapped in ```json ... ``` or ``` ... ``` fences
+    - JSON preceded or followed by explanatory prose
+    - Trailing commas inside objects/arrays (best-effort via re)
+    - Windows-style single-quote JSON is NOT accepted (never eval)
+
+    Raises ValueError with a clear message if extraction fails.
+    """
+    import re
+
     text = raw.strip()
 
-    # Strip code fences if present
-    if "```" in text:
-        lines = text.splitlines()
-        inside, json_lines = False, []
-        for line in lines:
-            if not inside:
-                if line.strip().startswith("```"):
-                    inside = True
-            else:
-                if line.strip() == "```":
-                    break
-                json_lines.append(line)
-        if json_lines:
-            text = "\n".join(json_lines).strip()
+    # ----------------------------------------------------------------
+    # Step 1: strip markdown code fences
+    # Handles ```json, ```JSON, ``` (any fence opener)
+    # ----------------------------------------------------------------
+    fence_re = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.DOTALL)
+    fence_match = fence_re.search(text)
+    if fence_match:
+        text = fence_match.group(1).strip()
 
-    # Find outermost { ... }
+    # ----------------------------------------------------------------
+    # Step 2: find the first '{' and scan for the matching '}'
+    # Uses a depth counter — safe, no eval.
+    # ----------------------------------------------------------------
     first = text.find("{")
     if first == -1:
-        raise ValueError("No JSON object found in Ollama response.")
+        raise ValueError(
+            "No JSON object found in Ollama response.\n"
+            f"Response preview: {raw[:200]!r}"
+        )
 
-    depth, last = 0, first
+    depth = 0
+    last  = -1
+    in_string  = False
+    escape_next = False
+
     for i in range(first, len(text)):
-        if text[i] == "{":
+        ch = text[i]
+
+        if escape_next:
+            escape_next = False
+            continue
+
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if ch == "{":
             depth += 1
-        elif text[i] == "}":
+        elif ch == "}":
             depth -= 1
             if depth == 0:
                 last = i
                 break
 
+    if last == -1:
+        raise ValueError(
+            "Unmatched braces in Ollama JSON response.\n"
+            f"Response preview: {raw[:200]!r}"
+        )
+
+    candidate = text[first : last + 1]
+
+    # ----------------------------------------------------------------
+    # Step 3: try strict parse first
+    # ----------------------------------------------------------------
     try:
-        return json.loads(text[first:last + 1])
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    # ----------------------------------------------------------------
+    # Step 4: best-effort cleanup — remove trailing commas
+    # Only touches commas before } or ] — safe transformation.
+    # ----------------------------------------------------------------
+    cleaned = re.sub(r",\s*([}\]])", r"\1", candidate)
+    try:
+        return json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"JSON parse error: {exc}") from exc
+        raise ValueError(
+            f"JSON parse error after cleanup: {exc}\n"
+            f"Candidate (first 400 chars): {candidate[:400]!r}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

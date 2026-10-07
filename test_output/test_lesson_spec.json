@@ -1,0 +1,63 @@
+{
+  "topic": "insertion sort",
+  "language": "en",
+  "algorithm": "insertion_sort",
+  "target_duration": 90,
+  "learning_objectives": [
+    "understand insertion sort",
+    "know its complexity"
+  ],
+  "beats": [
+    {
+      "id": "beat_1",
+      "concept": "introduction",
+      "narration": "Insertion sort builds a sorted array one element at a time.",
+      "visual_text": "Insertion Sort",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "show_array",
+        "data": {
+          "values": [
+            5,
+            2,
+            8,
+            3,
+            1
+          ]
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_2",
+      "concept": "step_1",
+      "narration": "We pick the second element and compare it with those before it.",
+      "visual_text": "Select Key",
+      "importance": "normal",
+      "visual": {
+        "type": "array",
+        "action": "select_key",
+        "data": {
+          "index": 1
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_3",
+      "concept": "complexity",
+      "narration": "Insertion sort has a time complexity of O of n squared.",
+      "visual_text": "O(n\u00b2)",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "show_complexity",
+        "data": {
+          "value": "O(n\u00b2)"
+        }
+      },
+      "language": "en"
+    }
+  ]
+}

@@ -1,0 +1,183 @@
+{
+  "topic": "Insertion Sort",
+  "language": "en",
+  "algorithm": "insertion_sort",
+  "target_duration": 90,
+  "learning_objectives": [
+    "Understand the concept of insertion sort",
+    "Learn how to implement insertion sort"
+  ],
+  "beats": [
+    {
+      "id": "beat_1",
+      "concept": "introduction",
+      "narration": "Insertion sort is a simple sorting algorithm that builds the sorted array one element at a time.",
+      "visual_text": "Insertion Sort",
+      "importance": "key",
+      "visual": {
+        "type": "text",
+        "action": "show_text",
+        "data": {
+          "text": "Insertion Sort"
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_2",
+      "concept": "definition",
+      "narration": "It works by iterating through the array one element at a time, inserting each element into its proper position in the sorted portion of the array.",
+      "visual_text": "How Insertion Sort Works",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "show_array",
+        "data": {
+          "values": [
+            5,
+            2,
+            8,
+            3,
+            1
+          ]
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_3",
+      "concept": "step_1",
+      "narration": "Let's start with the array [5, 2, 8, 3, 1].",
+      "visual_text": "Initial Array",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "show_array",
+        "data": {
+          "values": [
+            5,
+            2,
+            8,
+            3,
+            1
+          ]
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_4",
+      "concept": "step_1",
+      "narration": "We'll start by selecting the first element, 5.",
+      "visual_text": "Select Key",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "select_key",
+        "data": {
+          "index": 0
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_5",
+      "concept": "step_2",
+      "narration": "Now, we'll compare 5 with the rest of the array to find its proper position.",
+      "visual_text": "Compare",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "compare",
+        "data": {
+          "compare_with": 1
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_6",
+      "concept": "step_3",
+      "narration": "Since 5 is greater than 2, we'll shift 2 to the right.",
+      "visual_text": "Shift",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "shift",
+        "data": {
+          "indices": [
+            0
+          ]
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_7",
+      "concept": "step_4",
+      "narration": "Now, we'll insert 5 into its proper position.",
+      "visual_text": "Insert",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "insert",
+        "data": {
+          "index": 0,
+          "value": 5
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_8",
+      "concept": "step_5",
+      "narration": "We'll repeat this process until the entire array is sorted.",
+      "visual_text": "Repeat",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "show_array",
+        "data": {
+          "values": [
+            5,
+            2,
+            8,
+            3,
+            1
+          ]
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_9",
+      "concept": "complexity",
+      "narration": "The time complexity of insertion sort is O(n^2), making it less efficient for large datasets.",
+      "visual_text": "Time Complexity",
+      "importance": "key",
+      "visual": {
+        "type": "text",
+        "action": "show_text",
+        "data": {
+          "text": "O(n^2)"
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_10",
+      "concept": "summary",
+      "narration": "In summary, insertion sort is a simple sorting algorithm that builds the sorted array one element at a time, with a time complexity of O(n^2).",
+      "visual_text": "Summary",
+      "importance": "key",
+      "visual": {
+        "type": "text",
+        "action": "show_text",
+        "data": {
+          "text": "Insertion Sort"
+        }
+      },
+      "language": "en"
+    }
+  ]
+}

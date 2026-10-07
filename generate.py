@@ -43,7 +43,6 @@ import datetime
 from pathlib import Path
 
 from lesson_planner import generate_lesson_plan
-from timing_service import create_timing_service
 from visual_renderer import create_visual_renderer
 from muxing_service import create_muxing_service
 from language_codes import (
@@ -62,6 +61,12 @@ SCENE_CLASS   = "GeneratedLessonScene"
 QUALITY_FLAG  = "-ql"   # low quality = fast; use -qm/-qh for better quality
 OUTPUT_ROOT   = "output"
 MANIM_TIMEOUT = 600     # 10 minutes for Manim rendering
+TTS_TIMEOUT   = 600     # 10 minutes for TTS generation
+
+# .tts-venv Python interpreter (has torch/parler_tts, no Manim)
+_HERE       = os.path.dirname(os.path.abspath(__file__))
+TTS_PYTHON  = os.path.join(_HERE, ".tts-venv", "Scripts", "python.exe")
+TTS_WORKER  = os.path.join(_HERE, "tts_worker.py")
 
 SEP = "  " + "-" * 70
 
@@ -108,6 +113,89 @@ def _save_code(path: str, topic: str, run_dir: str, code: str) -> None:
     )
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(header + code + "\n")
+
+# ---------------------------------------------------------------------------
+# TTS SUBPROCESS RUNNER
+# ---------------------------------------------------------------------------
+
+def _run_tts_subprocess(lesson_spec: dict, audio_dir: str) -> tuple:
+    """
+    Run TTS generation inside .tts-venv by spawning tts_worker.py.
+
+    generate.py runs in .venv (Manim, no torch).
+    tts_worker.py runs in .tts-venv (torch, parler_tts, no Manim).
+
+    Communication:
+        stdin  -> JSON job
+        stdout <- JSON result (enriched beats)
+        stderr -> progress lines printed live to the terminal
+
+    Returns:
+        (enriched_beats: list[dict], metadata: dict)
+    Raises:
+        RuntimeError on any failure.
+    """
+    if not os.path.exists(TTS_PYTHON):
+        raise RuntimeError(
+            f".tts-venv interpreter not found:\n  {TTS_PYTHON}\n"
+            "Create it with:  python -m venv .tts-venv\n"
+            "Then install:    .tts-venv\\Scripts\\pip install torch parler-tts soundfile transformers"
+        )
+    if not os.path.exists(TTS_WORKER):
+        raise RuntimeError(f"tts_worker.py not found: {TTS_WORKER}")
+
+    beats = lesson_spec.get("beats", [])
+    job   = {
+        "beats":      beats,
+        "output_dir": audio_dir,
+        "language":   lesson_spec.get("language", "en"),
+    }
+
+    print(f"  Spawning TTS worker (.tts-venv Python)...")
+    print(f"  Processing {len(beats)} beats...")
+    print()
+
+    try:
+        proc = subprocess.run(
+            [TTS_PYTHON, TTS_WORKER],
+            input=json.dumps(job),
+            stdout=subprocess.PIPE,   # capture result JSON
+            stderr=None,              # let stderr flow directly to terminal (live progress)
+            text=True,
+            timeout=TTS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"TTS worker timed out after {TTS_TIMEOUT}s")
+    except FileNotFoundError:
+        raise RuntimeError(f"Could not launch: {TTS_PYTHON}")
+
+    stdout = (proc.stdout or "").strip()
+
+    if not stdout:
+        raise RuntimeError(
+            "TTS worker produced no output.\n"
+            "Check the progress messages above for error details."
+        )
+
+    try:
+        response = json.loads(stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"TTS worker output was not valid JSON: {e}\n"
+            f"stdout: {stdout[:300]}"
+        )
+
+    if not response.get("ok"):
+        raise RuntimeError(f"TTS worker failed: {response.get('error', 'unknown')}")
+
+    enriched_beats = response["enriched_beats"]
+    metadata = {
+        "total_duration": response["total_duration"],
+        "beat_count":     response["beat_count"],
+        "audio_files":    [b["audio_file"] for b in enriched_beats],
+    }
+    return enriched_beats, metadata
+
 
 # ---------------------------------------------------------------------------
 # MANIM RENDERER
@@ -359,14 +447,8 @@ def main() -> None:
         
         stage_start = time.perf_counter()
         
-        # Initialize TTS service
-        print("  Loading TTS model...")
-        timing_service = create_timing_service(output_dir=audio_dir)
-        
-        # Generate audio for all beats
-        print(f"  Generating audio for {len(beats)} beats...")
         try:
-            enriched_beats, audio_metadata = timing_service.measure_beats(lesson_spec)
+            enriched_beats, audio_metadata = _run_tts_subprocess(lesson_spec, audio_dir)
         except Exception as e:
             print(f"  [ERROR] TTS generation failed: {e}")
             raise

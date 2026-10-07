@@ -1,15 +1,28 @@
 """
 Comprehensive test suite for LocalLearn AI upgraded architecture.
 
-Run individual tests:
+TEST CATEGORIES
+---------------
+FAST (offline, no models):
+    test_json_parser       -- _extract_json edge cases
+    test_lesson_planning   -- mocked Ollama response (fast, offline)
+    test_visual_renderer   -- scene file generation
+    test_muxing            -- FFmpeg availability check
+
+LIVE (requires running Ollama / .tts-venv):
+    test_lesson_planning_live  -- real Ollama call
+    test_tts                   -- real Indic-Parler model (needs .tts-venv)
+    test_timing                -- measures WAV files produced by test_tts
+
+Usage:
+    python test_pipeline.py all                    # fast tests only
+    python test_pipeline.py test_json_parser
     python test_pipeline.py test_lesson_planning
-    python test_pipeline.py test_tts
-    python test_pipeline.py test_timing
     python test_pipeline.py test_visual_renderer
     python test_pipeline.py test_muxing
-
-Run all tests:
-    python test_pipeline.py all
+    python test_pipeline.py test_lesson_planning_live
+    python test_pipeline.py test_tts              # LIVE - needs .tts-venv
+    python test_pipeline.py test_timing           # depends on test_tts
 """
 
 import sys
@@ -18,128 +31,277 @@ import json
 import time
 from pathlib import Path
 
-from lesson_planner import generate_lesson_plan
-from timing_service import create_timing_service
-from visual_renderer import create_visual_renderer
-from muxing_service import create_muxing_service
 from language_codes import LanguageCode
 
-
-# Test output directory
 TEST_OUTPUT = "test_output"
 Path(TEST_OUTPUT).mkdir(exist_ok=True)
 
 
-def print_test_header(test_name: str):
-    """Print a formatted test header."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _header(name: str) -> None:
     print()
     print("=" * 70)
-    print(f"  TEST: {test_name}")
+    print(f"  TEST: {name}")
     print("=" * 70)
     print()
 
 
-def print_test_result(test_name: str, passed: bool, message: str = ""):
-    """Print test result."""
+def _result(name: str, passed: bool, msg: str = "") -> bool:
     status = "✓ PASS" if passed else "✗ FAIL"
     print()
-    print(f"  [{status}] {test_name}")
-    if message:
-        print(f"  {message}")
+    print(f"  [{status}] {name}")
+    if msg:
+        print(f"  {msg}")
     print()
+    return passed
 
 
-# ===========================================================================
-# TEST 1: LESSON PLANNING
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# TEST: JSON parser edge cases (FAST, no model)
+# ---------------------------------------------------------------------------
+
+def test_json_parser():
+    """Verify _extract_json handles all realistic Ollama output shapes."""
+    _header("JSON Parser (offline)")
+
+    from lesson_planner import _extract_json
+
+    VALID_CORE = {
+        "topic": "insertion sort",
+        "language": "en",
+        "algorithm": "insertion_sort",
+        "target_duration": 60,
+        "beats": [],
+    }
+
+    cases = [
+        # (label, raw_input, should_succeed)
+        ("A: pure JSON",
+         json.dumps(VALID_CORE),
+         True),
+
+        ("B: JSON inside ```json fence",
+         "```json\n" + json.dumps(VALID_CORE) + "\n```",
+         True),
+
+        ("C: JSON inside plain ``` fence",
+         "```\n" + json.dumps(VALID_CORE) + "\n```",
+         True),
+
+        ("D: explanatory text before JSON",
+         "Here is the lesson plan:\n\n" + json.dumps(VALID_CORE),
+         True),
+
+        ("E: whitespace around JSON",
+         "   \n\n  " + json.dumps(VALID_CORE) + "  \n\n  ",
+         True),
+
+        ("F: trailing comma in object (best-effort)",
+         '{"topic": "insertion sort", "beats": [],}',
+         True),
+
+        ("G: completely malformed — must fail",
+         "This is not JSON at all.",
+         False),
+
+        ("H: empty string — must fail",
+         "",
+         False),
+    ]
+
+    errors = []
+    for label, raw, should_succeed in cases:
+        try:
+            result = _extract_json(raw)
+            if should_succeed:
+                print(f"    ✓ {label}")
+            else:
+                errors.append(f"{label}: expected failure but got {result}")
+                print(f"    ✗ {label}: expected failure but parsed successfully")
+        except ValueError as exc:
+            if not should_succeed:
+                print(f"    ✓ {label} (correctly rejected: {exc!s:.60})")
+            else:
+                errors.append(f"{label}: unexpected failure: {exc}")
+                print(f"    ✗ {label}: {exc}")
+
+    if errors:
+        return _result("JSON Parser", False, f"{len(errors)} case(s) failed")
+    return _result("JSON Parser", True, f"All {len(cases)} cases passed")
+
+
+# ---------------------------------------------------------------------------
+# TEST: Lesson planning with mocked Ollama (FAST, offline)
+# ---------------------------------------------------------------------------
+
+_MOCK_OLLAMA_RESPONSE = {
+    "topic": "insertion sort",
+    "language": "en",
+    "algorithm": "insertion_sort",
+    "target_duration": 90,
+    "learning_objectives": ["understand insertion sort", "know its complexity"],
+    "beats": [
+        {
+            "id": "beat_1",
+            "concept": "introduction",
+            "narration": "Insertion sort builds a sorted array one element at a time.",
+            "visual_text": "Insertion Sort",
+            "importance": "key",
+            "visual": {
+                "type": "array",
+                "action": "show_array",
+                "data": {"values": [5, 2, 8, 3, 1]},
+            },
+        },
+        {
+            "id": "beat_2",
+            "concept": "step_1",
+            "narration": "We pick the second element and compare it with those before it.",
+            "visual_text": "Select Key",
+            "importance": "normal",
+            "visual": {
+                "type": "array",
+                "action": "select_key",
+                "data": {"index": 1},
+            },
+        },
+        {
+            "id": "beat_3",
+            "concept": "complexity",
+            "narration": "Insertion sort has a time complexity of O of n squared.",
+            "visual_text": "O(n²)",
+            "importance": "key",
+            "visual": {
+                "type": "array",
+                "action": "show_complexity",
+                "data": {"value": "O(n²)"},
+            },
+        },
+    ],
+}
+
 
 def test_lesson_planning():
-    """Test Ollama lesson planning with beat-based structure."""
-    print_test_header("Lesson Planning (Ollama)")
-    
-    topic = "insertion sort"
-    language = LanguageCode.ENGLISH
-    
+    """
+    Lesson planning test using a mocked Ollama response (FAST, offline).
+    Validates LessonSpec structure, beat fields, and visual plans.
+    """
+    _header("Lesson Planning (mocked Ollama, offline)")
+
+    from lesson_planner import _extract_json, _normalise_spec, _validate, _validate_beats
+    from language_codes import LanguageCode
+
+    # Simulate what _extract_json + _normalise_spec do on a real Ollama reply
+    raw = json.dumps(_MOCK_OLLAMA_RESPONSE)
+
     try:
-        print(f"  Generating lesson plan for: {topic}")
-        print(f"  Language: {language.value}")
-        print()
-        
-        start = time.perf_counter()
-        spec, planning_time = generate_lesson_plan(topic, language)
-        elapsed = time.perf_counter() - start
-        
-        # Validation checks
-        errors = []
-        
-        if "topic" not in spec:
-            errors.append("Missing 'topic' field")
-        
-        if "beats" not in spec:
-            errors.append("Missing 'beats' field")
-        elif not isinstance(spec["beats"], list):
-            errors.append("'beats' is not a list")
-        elif len(spec["beats"]) == 0:
-            errors.append("'beats' list is empty")
-        else:
-            # Validate beat structure
-            for i, beat in enumerate(spec["beats"]):
-                if not isinstance(beat, dict):
-                    errors.append(f"Beat {i} is not a dict")
-                    continue
-                
-                required = {"id", "concept", "narration", "visual_text", "importance"}
-                missing = required - beat.keys()
-                if missing:
-                    errors.append(f"Beat {i} missing fields: {missing}")
-                
-                # Check visual plan
-                if "visual" in beat:
-                    visual = beat["visual"]
-                    if not isinstance(visual, dict):
-                        errors.append(f"Beat {i}: visual is not a dict")
-                    else:
-                        visual_required = {"type", "action", "data"}
-                        visual_missing = visual_required - visual.keys()
-                        if visual_missing:
-                            errors.append(f"Beat {i}: visual missing {visual_missing}")
-        
-        # Save spec for inspection
-        spec_path = Path(TEST_OUTPUT) / "test_lesson_spec.json"
-        with open(spec_path, 'w', encoding='utf-8') as f:
-            json.dump(spec, f, indent=2)
-        
-        print(f"  Planning time: {planning_time:.2f}s")
-        print(f"  Total elapsed: {elapsed:.2f}s")
-        print(f"  Beats generated: {len(spec.get('beats', []))}")
-        print(f"  Spec saved: {spec_path}")
-        
-        if errors:
-            print()
-            print("  Validation errors:")
-            for err in errors:
-                print(f"    - {err}")
-            print_test_result("Lesson Planning", False, "Spec validation failed")
-            return False
-        
-        print_test_result("Lesson Planning", True, f"Generated {len(spec['beats'])} beats successfully")
-        return True
-    
+        spec = _extract_json(raw)
     except Exception as e:
-        print(f"  ERROR: {e}")
-        print_test_result("Lesson Planning", False, str(e))
-        return False
+        return _result("Lesson Planning", False, f"_extract_json failed: {e}")
+
+    errors = _validate(spec)
+    if errors:
+        return _result("Lesson Planning", False, "Validation errors: " + "; ".join(errors))
+
+    spec = _normalise_spec(spec, LanguageCode.EN)
+
+    # Check required top-level fields
+    top_errors = []
+    for field in ("topic", "language", "target_duration", "beats"):
+        if field not in spec:
+            top_errors.append(f"Missing field: {field}")
+    if spec.get("language") != "en":
+        top_errors.append(f"language mismatch: {spec.get('language')!r}")
+
+    beats = spec.get("beats", [])
+    if not beats:
+        top_errors.append("beats list is empty")
+
+    beat_errors = _validate_beats(beats)
+
+    # Check visual plans
+    visual_errors = []
+    for i, beat in enumerate(beats):
+        visual = beat.get("visual")
+        if not visual:
+            visual_errors.append(f"Beat {i} ({beat.get('id','?')}): no visual plan")
+            continue
+        for key in ("type", "action", "data"):
+            if key not in visual:
+                visual_errors.append(f"Beat {i}: visual missing '{key}'")
+
+    all_errors = top_errors + beat_errors + visual_errors
+    if all_errors:
+        for e in all_errors:
+            print(f"    - {e}")
+        return _result("Lesson Planning", False, f"{len(all_errors)} error(s)")
+
+    # Save for inspection
+    spec_path = Path(TEST_OUTPUT) / "test_lesson_spec.json"
+    spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
+
+    print(f"  Beats: {len(beats)}")
+    print(f"  Algorithm: {spec.get('algorithm', 'not set')}")
+    print(f"  Language: {spec['language']}")
+    print(f"  Spec saved: {spec_path}")
+
+    return _result("Lesson Planning", True, f"{len(beats)} beats validated")
 
 
-# ===========================================================================
-# TEST 2: TTS GENERATION
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# TEST: Lesson planning — LIVE Ollama call
+# ---------------------------------------------------------------------------
+
+def test_lesson_planning_live():
+    """
+    LIVE TEST: makes a real Ollama call. Requires Ollama running with llama3:latest.
+    """
+    _header("Lesson Planning LIVE (real Ollama)")
+    print("  NOTE: This test calls Ollama and may take up to 240 seconds.")
+    print()
+
+    from lesson_planner import generate_lesson_plan
+
+    try:
+        start = time.perf_counter()
+        spec, planning_time = generate_lesson_plan("insertion sort", LanguageCode.EN)
+        elapsed = time.perf_counter() - start
+
+        beats = spec.get("beats", [])
+        print(f"  Planning time: {planning_time:.2f}s  (total: {elapsed:.2f}s)")
+        print(f"  Beats: {len(beats)}")
+        print(f"  Algorithm: {spec.get('algorithm', 'not set')}")
+
+        if not beats:
+            return _result("Lesson Planning LIVE", False, "No beats generated")
+
+        spec_path = Path(TEST_OUTPUT) / "test_lesson_spec_live.json"
+        spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
+        print(f"  Spec saved: {spec_path}")
+
+        return _result("Lesson Planning LIVE", True, f"{len(beats)} beats")
+
+    except Exception as e:
+        return _result("Lesson Planning LIVE", False, str(e))
+
+
+# ---------------------------------------------------------------------------
+# TEST: TTS Generation — LIVE (needs .tts-venv)
+# ---------------------------------------------------------------------------
 
 def test_tts():
-    """Test TTS generation for sample beats."""
-    print_test_header("TTS Generation")
-    
-    # Create sample beats
+    """
+    LIVE TTS TEST: loads the real Indic-Parler model via .tts-venv.
+    Run with: .tts-venv\\Scripts\\python.exe test_pipeline.py test_tts
+    """
+    _header("TTS Generation (LIVE — Indic-Parler)")
+    print("  NOTE: This test loads Indic-Parler (~3.75 GB) and may take several minutes.")
+    print("  Run inside .tts-venv for torch/parler_tts support.")
+    print()
+
     sample_beats = [
         {
             "id": "beat_1",
@@ -148,11 +310,6 @@ def test_tts():
             "visual_text": "Insertion Sort",
             "importance": "key",
             "language": "en",
-            "visual": {
-                "type": "array",
-                "action": "show_array",
-                "data": {"values": [5, 2, 8, 3, 1]}
-            }
         },
         {
             "id": "beat_2",
@@ -161,370 +318,248 @@ def test_tts():
             "visual_text": "Select Key",
             "importance": "normal",
             "language": "en",
-            "visual": {
-                "type": "array",
-                "action": "select_key",
-                "data": {"index": 1}
-            }
-        }
+        },
     ]
-    
-    lesson_spec = {
-        "topic": "insertion sort test",
-        "language": "en",
-        "beats": sample_beats
-    }
-    
+    lesson_spec = {"topic": "insertion sort test", "language": "en", "beats": sample_beats}
+
+    audio_dir = Path(TEST_OUTPUT) / "test_audio"
+    audio_dir.mkdir(exist_ok=True)
+
     try:
-        audio_dir = Path(TEST_OUTPUT) / "test_audio"
-        audio_dir.mkdir(exist_ok=True)
-        
+        from timing_service import create_timing_service
+
         print(f"  Generating audio for {len(sample_beats)} beats...")
-        print(f"  Output directory: {audio_dir}")
+        print(f"  Output: {audio_dir}")
         print()
-        
-        timing_service = create_timing_service(output_dir=str(audio_dir))
-        
+
+        svc = create_timing_service(output_dir=str(audio_dir))
+
         start = time.perf_counter()
-        enriched_beats, metadata = timing_service.measure_beats(lesson_spec)
+        enriched, meta = svc.measure_beats(lesson_spec)
         elapsed = time.perf_counter() - start
-        
-        print(f"  TTS generation time: {elapsed:.2f}s")
-        print(f"  Total audio duration: {metadata['total_duration']:.2f}s")
-        print(f"  Audio files generated: {metadata['beat_count']}")
-        print()
-        
-        # Validation
-        errors = []
-        for i, beat in enumerate(enriched_beats):
-            if "audio_file" not in beat:
-                errors.append(f"Beat {i} missing 'audio_file'")
-            elif not Path(beat["audio_file"]).exists():
-                errors.append(f"Beat {i} audio file not found: {beat['audio_file']}")
-            
-            if "audio_duration" not in beat:
-                errors.append(f"Beat {i} missing 'audio_duration'")
-            elif beat["audio_duration"] <= 0:
-                errors.append(f"Beat {i} has invalid duration: {beat['audio_duration']}")
-            
+
+        print(f"  Generation time:  {elapsed:.2f}s")
+        print(f"  Total duration:   {meta['total_duration']:.2f}s")
+        print(f"  Files generated:  {meta['beat_count']}")
+
+        errs = []
+        for i, beat in enumerate(enriched):
+            af = beat.get("audio_file", "")
+            if not af or not Path(af).exists():
+                errs.append(f"Beat {i}: audio file missing: {af!r}")
+            dur = beat.get("audio_duration", 0)
+            if dur <= 0:
+                errs.append(f"Beat {i}: invalid duration {dur}")
             if "start_time" not in beat or "end_time" not in beat:
-                errors.append(f"Beat {i} missing timing fields")
-        
-        if errors:
-            print("  Validation errors:")
-            for err in errors:
-                print(f"    - {err}")
-            print_test_result("TTS Generation", False, "Beat enrichment validation failed")
-            return False
-        
-        print_test_result("TTS Generation", True, f"Generated {metadata['beat_count']} audio files")
-        return True
-    
+                errs.append(f"Beat {i}: missing timing fields")
+
+        if errs:
+            for e in errs:
+                print(f"    - {e}")
+            return _result("TTS Generation", False, "Beat validation failed")
+
+        return _result("TTS Generation", True, f"{meta['beat_count']} files generated")
+
+    except ImportError as e:
+        return _result("TTS Generation", False,
+                       f"Import error (are you in .tts-venv?): {e}")
     except Exception as e:
-        print(f"  ERROR: {e}")
-        print_test_result("TTS Generation", False, str(e))
-        return False
+        return _result("TTS Generation", False, str(e))
 
 
-# ===========================================================================
-# TEST 3: TIMING SERVICE
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# TEST: Timing — measures WAVs produced by test_tts
+# ---------------------------------------------------------------------------
 
 def test_timing():
-    """Test audio timing measurement accuracy."""
-    print_test_header("Timing Service")
-    
-    try:
-        from tts.audio_utils import measure_audio_duration
-        
-        # Check if we have test audio files from previous test
-        audio_dir = Path(TEST_OUTPUT) / "test_audio"
-        if not audio_dir.exists():
-            print("  No audio files found. Run test_tts first.")
-            print_test_result("Timing Service", False, "Missing audio files")
-            return False
-        
-        audio_files = list(audio_dir.glob("*.wav"))
-        if not audio_files:
-            print("  No WAV files found in test_audio directory.")
-            print_test_result("Timing Service", False, "No audio files to measure")
-            return False
-        
-        print(f"  Measuring {len(audio_files)} audio files...")
-        print()
-        
-        total_duration = 0.0
-        errors = []
-        
-        for audio_file in audio_files:
-            try:
-                duration = measure_audio_duration(str(audio_file))
-                total_duration += duration
-                print(f"    {audio_file.name}: {duration:.3f}s")
-                
-                if duration <= 0:
-                    errors.append(f"{audio_file.name}: invalid duration {duration}")
-            except Exception as e:
-                errors.append(f"{audio_file.name}: {e}")
-        
-        print()
-        print(f"  Total measured duration: {total_duration:.2f}s")
-        
-        if errors:
-            print()
-            print("  Measurement errors:")
-            for err in errors:
-                print(f"    - {err}")
-            print_test_result("Timing Service", False, "Duration measurement failed")
-            return False
-        
-        print_test_result("Timing Service", True, f"Measured {len(audio_files)} files successfully")
-        return True
-    
-    except Exception as e:
-        print(f"  ERROR: {e}")
-        print_test_result("Timing Service", False, str(e))
-        return False
+    """Measures WAV durations produced by test_tts. Depends on test_tts having run first."""
+    _header("Timing Service")
+
+    from tts.audio_utils import measure_audio_duration
+
+    audio_dir = Path(TEST_OUTPUT) / "test_audio"
+    if not audio_dir.exists():
+        return _result("Timing Service", False, "Run test_tts first to generate WAV files")
+
+    wav_files = sorted(audio_dir.glob("*.wav"))
+    if not wav_files:
+        return _result("Timing Service", False, "No WAV files found — run test_tts first")
+
+    print(f"  Measuring {len(wav_files)} WAV files...")
+    print()
+
+    total = 0.0
+    errs = []
+    for wf in wav_files:
+        try:
+            dur = measure_audio_duration(str(wf))
+            total += dur
+            print(f"    {wf.name}: {dur:.3f}s")
+            if dur <= 0:
+                errs.append(f"{wf.name}: duration {dur} <= 0")
+        except Exception as e:
+            errs.append(f"{wf.name}: {e}")
+
+    print()
+    print(f"  Total: {total:.2f}s")
+
+    if errs:
+        for e in errs:
+            print(f"    - {e}")
+        return _result("Timing Service", False, "Measurement errors")
+
+    return _result("Timing Service", True, f"{len(wav_files)} files, {total:.2f}s total")
 
 
-# ===========================================================================
-# TEST 4: VISUAL RENDERER
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# TEST: Visual renderer (FAST, offline)
+# ---------------------------------------------------------------------------
 
 def test_visual_renderer():
-    """Test visual renderer scene generation."""
-    print_test_header("Visual Renderer")
-    
-    # Create enriched beats (simulating timing service output)
+    """Test deterministic scene file generation (offline, no model)."""
+    _header("Visual Renderer")
+
     enriched_beats = [
         {
-            "id": "beat_1",
-            "concept": "introduction",
+            "id": "beat_1", "concept": "introduction",
             "narration": "Insertion sort is a simple sorting algorithm.",
-            "visual_text": "Insertion Sort",
-            "importance": "key",
-            "language": "en",
-            "audio_file": "beat_1.wav",
-            "audio_duration": 3.5,
-            "start_time": 0.0,
-            "end_time": 3.5,
-            "visual": {
-                "type": "array",
-                "action": "show_array",
-                "data": {"values": [5, 2, 8, 3, 1]}
-            }
+            "visual_text": "Insertion Sort", "importance": "key", "language": "en",
+            "audio_file": "beat_1.wav", "audio_duration": 3.5,
+            "start_time": 0.0, "end_time": 3.5,
+            "visual": {"type": "array", "action": "show_array",
+                       "data": {"values": [5, 2, 8, 3, 1]}},
         },
         {
-            "id": "beat_2",
-            "concept": "step_1",
-            "narration": "We start by selecting the second element as the key.",
-            "visual_text": "Select Key",
-            "importance": "normal",
-            "language": "en",
-            "audio_file": "beat_2.wav",
-            "audio_duration": 4.2,
-            "start_time": 3.5,
-            "end_time": 7.7,
-            "visual": {
-                "type": "array",
-                "action": "select_key",
-                "data": {"index": 1}
-            }
-        }
+            "id": "beat_2", "concept": "step_1",
+            "narration": "We select the second element as the key.",
+            "visual_text": "Select Key", "importance": "normal", "language": "en",
+            "audio_file": "beat_2.wav", "audio_duration": 4.2,
+            "start_time": 3.5, "end_time": 7.7,
+            "visual": {"type": "array", "action": "select_key",
+                       "data": {"index": 1}},
+        },
     ]
-    
+
     try:
-        print(f"  Generating scene file for {len(enriched_beats)} beats...")
-        print()
-        
-        visual_service = create_visual_renderer(output_dir=TEST_OUTPUT)
-        
-        # Validate beats first
-        validation_errors = visual_service.validate_beats(enriched_beats)
-        if validation_errors:
-            print("  Beat validation warnings:")
-            for err in validation_errors[:5]:
-                print(f"    - {err}")
-            if len(validation_errors) > 5:
-                print(f"    ... and {len(validation_errors) - 5} more")
-            print()
-        
+        from visual_renderer import create_visual_renderer
+        svc = create_visual_renderer(output_dir=TEST_OUTPUT)
+
         start = time.perf_counter()
-        scene_file = visual_service.generate_scene_file(
-            beats=enriched_beats,
-            output_filename="test_scene.py"
-        )
+        scene_file = svc.generate_scene_file(enriched_beats, output_filename="test_scene.py")
         elapsed = time.perf_counter() - start
-        
-        print(f"  Scene generation time: {elapsed:.4f}s")
+
+        print(f"  Generation time: {elapsed:.4f}s")
         print(f"  Scene file: {scene_file}")
-        print()
-        
-        # Validate generated file
+
         if not Path(scene_file).exists():
-            print_test_result("Visual Renderer", False, "Scene file not created")
-            return False
-        
-        # Check file content
-        with open(scene_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        errors = []
-        required_imports = ["from manim import Scene", "from visual_renderer import LessonScene"]
-        for imp in required_imports:
-            if imp not in content:
-                errors.append(f"Missing import: {imp}")
-        
-        if "BEATS = " not in content:
-            errors.append("Missing BEATS data")
-        
-        if "class GeneratedLessonScene" not in content:
-            errors.append("Missing GeneratedLessonScene class")
-        
-        if errors:
-            print("  Content validation errors:")
-            for err in errors:
-                print(f"    - {err}")
-            print_test_result("Visual Renderer", False, "Scene file validation failed")
-            return False
-        
-        file_size = Path(scene_file).stat().st_size
-        print(f"  Scene file size: {file_size} bytes")
-        
-        print_test_result("Visual Renderer", True, "Scene file generated successfully")
-        return True
-    
+            return _result("Visual Renderer", False, "Scene file not created")
+
+        content = Path(scene_file).read_text(encoding="utf-8")
+        errs = []
+        for token in ("from manim import Scene", "from visual_renderer import LessonScene",
+                      "BEATS = ", "class GeneratedLessonScene"):
+            if token not in content:
+                errs.append(f"Missing: {token!r}")
+
+        if errs:
+            for e in errs:
+                print(f"    - {e}")
+            return _result("Visual Renderer", False, "Scene file content invalid")
+
+        size = Path(scene_file).stat().st_size
+        print(f"  File size: {size} bytes")
+        return _result("Visual Renderer", True, "Scene file generated and validated")
+
     except Exception as e:
-        print(f"  ERROR: {e}")
-        print_test_result("Visual Renderer", False, str(e))
-        return False
+        return _result("Visual Renderer", False, str(e))
 
 
-# ===========================================================================
-# TEST 5: MUXING SERVICE
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# TEST: Muxing service (FAST, offline)
+# ---------------------------------------------------------------------------
 
 def test_muxing():
-    """Test FFmpeg muxing service setup and validation."""
-    print_test_header("Muxing Service")
-    
+    """Verify FFmpeg is available and MuxingService initialises."""
+    _header("Muxing Service")
+
     try:
-        print("  Initializing muxing service...")
-        print()
-        
         start = time.perf_counter()
-        muxing_service = create_muxing_service()
+        from muxing_service import create_muxing_service
+        svc = create_muxing_service()
         elapsed = time.perf_counter() - start
-        
-        print(f"  Initialization time: {elapsed:.3f}s")
-        print("  FFmpeg verification passed")
-        print()
-        
-        # Note: We can't test actual muxing without video/audio files
-        # But we can validate the service is ready
-        
-        print("  Muxing service ready for:")
-        print("    - mux_video_audio()")
-        print("    - mux_video_with_beat_audio()")
-        print("    - get_video_info()")
-        print("    - extract_audio_from_video()")
-        
-        print_test_result("Muxing Service", True, "Service initialized and FFmpeg verified")
-        return True
-    
+
+        print(f"  Init time: {elapsed:.3f}s")
+        print("  FFmpeg verified")
+        return _result("Muxing Service", True, "Service initialised, FFmpeg available")
+
     except Exception as e:
-        print(f"  ERROR: {e}")
-        print_test_result("Muxing Service", False, str(e))
-        return False
+        return _result("Muxing Service", False, str(e))
 
 
-# ===========================================================================
-# TEST RUNNER
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
+
+FAST_TESTS = [
+    ("JSON Parser",      test_json_parser),
+    ("Lesson Planning",  test_lesson_planning),
+    ("Visual Renderer",  test_visual_renderer),
+    ("Muxing Service",   test_muxing),
+]
+
 
 def run_all_tests():
-    """Run all tests and report summary."""
     print()
     print("=" * 70)
-    print("  LOCALLEARN AI - COMPREHENSIVE TEST SUITE")
+    print("  LOCALLEARN AI — FAST TEST SUITE (offline, no models)")
     print("=" * 70)
-    
-    tests = [
-        ("Lesson Planning", test_lesson_planning),
-        ("TTS Generation", test_tts),
-        ("Timing Service", test_timing),
-        ("Visual Renderer", test_visual_renderer),
-        ("Muxing Service", test_muxing),
-    ]
-    
+    print("  For live tests: python test_pipeline.py test_lesson_planning_live")
+    print("  For TTS tests:  .tts-venv\\Scripts\\python.exe test_pipeline.py test_tts")
+
     results = []
-    
-    for test_name, test_func in tests:
+    for name, fn in FAST_TESTS:
         try:
-            passed = test_func()
-            results.append((test_name, passed))
+            results.append((name, fn()))
         except Exception as e:
-            print(f"\n  FATAL ERROR in {test_name}: {e}")
-            results.append((test_name, False))
-    
-    # Summary
+            print(f"\n  FATAL ERROR in {name}: {e}")
+            results.append((name, False))
+
     print()
     print("=" * 70)
     print("  TEST SUMMARY")
     print("=" * 70)
     print()
-    
-    passed_count = sum(1 for _, passed in results if passed)
-    total_count = len(results)
-    
-    for test_name, passed in results:
-        status = "✓ PASS" if passed else "✗ FAIL"
-        print(f"  [{status}] {test_name}")
-    
+    for name, ok in results:
+        print(f"  [{'✓ PASS' if ok else '✗ FAIL'}] {name}")
+    passed = sum(1 for _, ok in results if ok)
     print()
-    print(f"  Results: {passed_count}/{total_count} tests passed")
-    
-    if passed_count == total_count:
-        print()
-        print("  ✓ ALL TESTS PASSED")
-        print()
-        return True
-    else:
-        print()
-        print("  ✗ SOME TESTS FAILED")
-        print()
-        return False
+    print(f"  Results: {passed}/{len(results)} passed")
+    print()
+    return passed == len(results)
 
-
-# ===========================================================================
-# MAIN
-# ===========================================================================
 
 def main():
-    if len(sys.argv) < 2:
-        print()
-        print("Usage:")
-        print("  python test_pipeline.py all                    # Run all tests")
-        print("  python test_pipeline.py test_lesson_planning   # Run specific test")
-        print("  python test_pipeline.py test_tts")
-        print("  python test_pipeline.py test_timing")
-        print("  python test_pipeline.py test_visual_renderer")
-        print("  python test_pipeline.py test_muxing")
+    dispatch = {
+        "all":                      run_all_tests,
+        "test_json_parser":         test_json_parser,
+        "test_lesson_planning":     test_lesson_planning,
+        "test_lesson_planning_live": test_lesson_planning_live,
+        "test_tts":                 test_tts,
+        "test_timing":              test_timing,
+        "test_visual_renderer":     test_visual_renderer,
+        "test_muxing":              test_muxing,
+    }
+
+    if len(sys.argv) < 2 or sys.argv[1] not in dispatch:
+        print("\nUsage: python test_pipeline.py <test>\n")
+        print("Available tests:")
+        for name in dispatch:
+            print(f"  {name}")
         print()
         sys.exit(1)
-    
-    test_name = sys.argv[1]
-    
-    if test_name == "all":
-        success = run_all_tests()
-        sys.exit(0 if success else 1)
-    elif test_name in globals():
-        test_func = globals()[test_name]
-        success = test_func()
-        sys.exit(0 if success else 1)
-    else:
-        print(f"\nUnknown test: {test_name}\n")
-        sys.exit(1)
+
+    success = dispatch[sys.argv[1]]()
+    sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":

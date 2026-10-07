@@ -15,10 +15,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import torch
-import soundfile as sf
-from parler_tts import ParlerTTSForConditionalGeneration
-from transformers import AutoTokenizer
+# torch, soundfile, parler_tts, and transformers are deferred to load()
+# so this module can be imported from environments that don't have them installed.
 
 from .language_config import get_voice_config
 
@@ -48,18 +46,43 @@ class IndicParlerTTS:
         tts.generate_audio("यह एक परीक्षण है", "output2.wav")
     """
     
-    def __init__(self, config: TTSConfig):
+    def __init__(self, config: TTSConfig | None = None):
+        if config is None:
+            config = TTSConfig()
         self.config = config
         self.model = None
         self.tokenizer = None
         self.description_tokenizer = None
         self.voice_config = get_voice_config(config.language)
+        self._torch = None
+        self._sf = None
         
     def load(self):
         """Load the Indic-Parler model and tokenizers."""
         if self.model is not None:
             return  # Already loaded
-        
+
+        # Deferred heavy imports — only available in .tts-venv
+        try:
+            import torch
+            self._torch = torch
+        except ImportError as exc:
+            raise ImportError(
+                "torch not available. Run TTS code inside .tts-venv:\n"
+                "  .tts-venv\\Scripts\\python.exe your_script.py"
+            ) from exc
+
+        try:
+            import soundfile as sf
+            from parler_tts import ParlerTTSForConditionalGeneration
+            from transformers import AutoTokenizer
+            self._sf = sf
+        except ImportError as exc:
+            raise ImportError(
+                f"Missing ML dependency: {exc}\n"
+                "Ensure you are running inside .tts-venv."
+            ) from exc
+
         print(f"  Loading Indic-Parler TTS model...")
         print(f"    Model: {MODEL_PATH}")
         print(f"    Language: {self.voice_config['language_name']} ({self.config.language})")
@@ -102,6 +125,9 @@ class IndicParlerTTS:
         if self.model is None:
             self.load()
         
+        torch = self._torch
+        sf    = self._sf
+
         if not text.strip():
             print(f"    [WARN] Empty text, skipping: {output_path}")
             return False
@@ -192,3 +218,10 @@ class IndicParlerTTS:
                 print(f"      → FAILED")
         
         return results
+
+    def generate_speech(self, text: str, language: str, output_path: str) -> bool:
+        """Alias used by TimingService. Updates voice config if language changes."""
+        if language != self.config.language:
+            self.config.language = language
+            self.voice_config = get_voice_config(language)
+        return self.generate_audio(text, output_path)

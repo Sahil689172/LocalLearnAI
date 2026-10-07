@@ -1,0 +1,127 @@
+{
+  "topic": "Linear Search",
+  "language": "en",
+  "algorithm": "linear_search",
+  "target_duration": 90,
+  "learning_objectives": [
+    "Understand the concept of linear search",
+    "Learn how to implement linear search"
+  ],
+  "beats": [
+    {
+      "id": "beat_1",
+      "concept": "introduction",
+      "narration": "Linear search is a simple algorithm for finding an element in a list.",
+      "visual_text": "Linear Search",
+      "importance": "key",
+      "visual": {
+        "type": "text",
+        "action": "show_text",
+        "data": {
+          "text": "Linear Search"
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_2",
+      "concept": "definition",
+      "narration": "It scans each element sequentially until it finds the target element.",
+      "visual_text": "Sequential Search",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "show_array",
+        "data": {
+          "values": [
+            5,
+            2,
+            8,
+            3,
+            1
+          ]
+        },
+        "emphasis": [
+          0
+        ]
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_3",
+      "concept": "step_1",
+      "narration": "Start by looking at the first element in the list.",
+      "visual_text": "First Element",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "select_key",
+        "data": {
+          "index": 0
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_4",
+      "concept": "step_2",
+      "narration": "If the target element is found, return its index.",
+      "visual_text": "Target Found",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "check_middle",
+        "data": {
+          "index": 1,
+          "value": 2
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_5",
+      "concept": "step_3",
+      "narration": "If the target element is not found, move on to the next element.",
+      "visual_text": "Target Not Found",
+      "importance": "key",
+      "visual": {
+        "type": "array",
+        "action": "eliminate_half",
+        "data": {
+          "index": 2
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_6",
+      "concept": "complexity",
+      "narration": "The time complexity of linear search is O(n), where n is the number of elements in the list.",
+      "visual_text": "Time Complexity",
+      "importance": "key",
+      "visual": {
+        "type": "text",
+        "action": "show_text",
+        "data": {
+          "text": "O(n)"
+        }
+      },
+      "language": "en"
+    },
+    {
+      "id": "beat_7",
+      "concept": "summary",
+      "narration": "Linear search is a simple and efficient algorithm for finding an element in a list.",
+      "visual_text": "Summary",
+      "importance": "key",
+      "visual": {
+        "type": "text",
+        "action": "show_text",
+        "data": {
+          "text": "Linear Search"
+        }
+      },
+      "language": "en"
+    }
+  ]
+}

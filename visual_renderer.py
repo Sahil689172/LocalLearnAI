@@ -6,17 +6,27 @@ high-quality Manim animations using algorithm-specific renderers.
 """
 
 from typing import Any
-from manim import Scene, VGroup, Text, Wait
 
-from visuals.base import VisualRenderer
-from visuals.insertion_sort import InsertionSortRenderer
-from visuals.binary_search import BinarySearchRenderer
-from visuals.bubble_sort import BubbleSortRenderer
-from visuals.selection_sort import SelectionSortRenderer
-from language_codes import LanguageCode
+# Manim and visuals imports are deferred — they require the main .venv
+# which has Manim installed. The .tts-venv does not have Manim.
+# Imports happen inside VisualRenderService.generate_scene_file() only.
 
 
-class LessonScene(Scene):
+try:
+    from manim import Scene, VGroup, Text, Wait
+    from visuals.base import VisualRenderer
+    from visuals.insertion_sort import InsertionSortRenderer
+    from visuals.binary_search import BinarySearchRenderer
+    from visuals.bubble_sort import BubbleSortRenderer
+    from visuals.selection_sort import SelectionSortRenderer
+    _MANIM_AVAILABLE = True
+    _BaseScene = Scene
+except ImportError:
+    _MANIM_AVAILABLE = False
+    _BaseScene = object  # fallback so class definition doesn't fail
+
+
+class LessonScene(_BaseScene):
     """
     Main Manim scene that orchestrates beat-by-beat animation.
     
@@ -295,6 +305,11 @@ class VisualRenderService:
         str
             Path to the generated scene file.
         """
+        # Deferred: only needed when actually generating a scene file
+        try:
+            from language_codes import LanguageCode  # noqa: F401
+        except ImportError:
+            pass
         import json
         from pathlib import Path
         

@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from tts.indic_parler import IndicParlerTTS
 from tts.audio_utils import measure_audio_duration
 from language_codes import LanguageCode
 
@@ -25,7 +24,7 @@ class TimingService:
     - Returns enriched beats with timing data
     """
     
-    def __init__(self, tts_service: IndicParlerTTS, output_dir: str | Path = "audio_output"):
+    def __init__(self, tts_service: Any, output_dir: str | Path = "audio_output"):
         """
         Initialize the timing service.
         
@@ -252,8 +251,9 @@ def create_timing_service(
         Ready-to-use timing service with loaded TTS model.
     """
     print("[TimingService] Initializing TTS service...")
+    from tts.indic_parler import IndicParlerTTS
     tts_service = IndicParlerTTS()
-    tts_service.load_model()
+    tts_service.load()
     print("[TimingService] TTS model loaded successfully.")
     
     return TimingService(tts_service=tts_service, output_dir=output_dir)
