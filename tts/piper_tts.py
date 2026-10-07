@@ -186,27 +186,83 @@ class PiperTTS:
             return False
         
         try:
-            # Generate audio using Piper Python API
-            # Opens WAV file and writes directly
+            # Use synthesize_wav() — the correct Piper 1.8.0 API for writing to a
+            # wave.Wave_write object.
+            #
+            # ROOT CAUSE OF ORIGINAL BUG:
+            #   The old code called: self.voice.synthesize(text, wav_file)
+            #   In Piper 1.8.0, synthesize(text, syn_config, include_alignments) does NOT
+            #   accept a wave.Wave_write as its second argument — that slot is syn_config.
+            #   So the WAV file's header (channels, sample width, frame rate) was never
+            #   initialised, causing Python's wave module to raise:
+            #       "# channels not specified"
+            #   when writeframes() was eventually called on an unconfigured Wave_write.
+            #
+            # THE FIX:
+            #   synthesize_wav(text, wav_file) is the method that actually writes audio to
+            #   a wave.Wave_write. On the first AudioChunk it calls:
+            #       wav_file.setnchannels(chunk.sample_channels)   # 1
+            #       wav_file.setsampwidth(chunk.sample_width)       # 2 (16-bit)
+            #       wav_file.setframerate(chunk.sample_rate)        # e.g. 22050
+            #   before writing any frames — exactly what wave requires.
             with wave.open(output_path, "wb") as wav_file:
-                self.voice.synthesize(text, wav_file)
-            
-            # Verify file was created
-            if not os.path.exists(output_path):
-                print(f"[Piper] Error: Output file not created: {output_path}", file=sys.stderr)
-                return False
-            
-            # Check file size (should be > 100 bytes for any real audio)
-            file_size = os.path.getsize(output_path)
-            if file_size < 100:
-                print(f"[Piper] Error: Generated file too small ({file_size} bytes): {output_path}", file=sys.stderr)
-                return False
-            
-            return True
-            
+                self.voice.synthesize_wav(text, wav_file)
+
         except Exception as e:
-            print(f"[Piper] Error generating audio: {e}", file=sys.stderr)
+            print(
+                f"[Piper] Error generating audio:\n"
+                f"  Type:    {type(e).__name__}\n"
+                f"  Message: {e}\n"
+                f"  Output:  {output_path}\n"
+                f"  Model:   {self.model_path}",
+                file=sys.stderr,
+            )
             return False
+
+        # ------------------------------------------------------------------
+        # WAV validation — every generated file must be a real audio file.
+        # ------------------------------------------------------------------
+        if not os.path.exists(output_path):
+            print(f"[Piper] Error: Output file not created: {output_path}", file=sys.stderr)
+            return False
+
+        file_size = os.path.getsize(output_path)
+        if file_size <= 44:
+            print(
+                f"[Piper] Error: Generated file is empty/header-only "
+                f"({file_size} bytes): {output_path}",
+                file=sys.stderr,
+            )
+            return False
+
+        try:
+            with wave.open(output_path, "rb") as check:
+                n_channels = check.getnchannels()
+                samp_width = check.getsampwidth()
+                frame_rate = check.getframerate()
+                n_frames   = check.getnframes()
+                duration   = n_frames / frame_rate if frame_rate > 0 else 0.0
+
+            if n_channels == 0 or samp_width == 0 or frame_rate == 0 or n_frames == 0 or duration == 0.0:
+                print(
+                    f"[Piper] Error: WAV validation failed for {output_path}:\n"
+                    f"  channels={n_channels}  sample_width={samp_width}  "
+                    f"frame_rate={frame_rate}  n_frames={n_frames}  duration={duration:.3f}s",
+                    file=sys.stderr,
+                )
+                return False
+
+        except Exception as e:
+            print(
+                f"[Piper] Error reading back WAV for validation:\n"
+                f"  Type:    {type(e).__name__}\n"
+                f"  Message: {e}\n"
+                f"  Output:  {output_path}",
+                file=sys.stderr,
+            )
+            return False
+
+        return True
     
     def generate_beats(self, beats: list[dict], output_dir: str, language: str = None) -> list[dict]:
         """

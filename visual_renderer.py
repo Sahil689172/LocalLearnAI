@@ -14,9 +14,10 @@ from typing import Any
 
 try:
     from manim import Scene, VGroup, Text, Wait
-    from visuals.base import VisualRenderer
+    from visuals.base import VisualRenderer, VisualAction
     from visuals.insertion_sort import InsertionSortRenderer
     from visuals.binary_search import BinarySearchRenderer
+    from visuals.linear_search import LinearSearchRenderer
     from visuals.bubble_sort import BubbleSortRenderer
     from visuals.selection_sort import SelectionSortRenderer
     _MANIM_AVAILABLE = True
@@ -60,10 +61,20 @@ class LessonScene(_BaseScene):
         This method is called by Manim to generate the scene.
         It processes beats sequentially, delegating to algorithm-specific
         renderers based on visual.type.
+        
+        Ensures final video duration matches total audio duration.
         """
+        total_audio_duration = sum(beat.get("audio_duration", 3.0) for beat in self.beats)
+        
         for i, beat in enumerate(self.beats):
             print(f"[LessonScene] Rendering beat {i+1}/{len(self.beats)}: {beat.get('id', '?')}")
             self._render_beat(beat)
+        
+        # Add a small buffer at the end to ensure video doesn't cut off early
+        # This addresses the issue where video (16.7s) ends before audio (27.2s)
+        self.wait(0.5)
+        
+        print(f"[LessonScene] Total animation duration target: {total_audio_duration:.2f}s")
     
     def _render_beat(self, beat: dict) -> None:
         """
@@ -125,6 +136,10 @@ class LessonScene(_BaseScene):
             "show_array", "check_middle", "found", 
             "eliminate_half", "show_complexity"
         }
+        linear_search_actions = {
+            "show_array", "set_pointer", "move_pointer", "compare_element",
+            "found", "not_found", "show_result", "show_complexity"
+        }
         bubble_sort_actions = {
             "show_array", "compare_adjacent", "swap", 
             "mark_sorted", "show_complexity"
@@ -140,6 +155,8 @@ class LessonScene(_BaseScene):
             renderer_type = "insertion_sort"
         elif action in binary_search_actions:
             renderer_type = "binary_search"
+        elif action in linear_search_actions:
+            renderer_type = "linear_search"
         elif action in bubble_sort_actions:
             renderer_type = "bubble_sort"
         elif action in selection_sort_actions:
@@ -154,11 +171,15 @@ class LessonScene(_BaseScene):
         
         # Execute the action
         try:
-            renderer.execute_action(
-                scene=self,
-                action=action,
-                data=data,
-                duration=duration
+            renderer.render_action(
+                VisualAction(
+                    type="array",
+                    action=action,
+                    data=data,
+                    emphasis=emphasis,
+                    duration=duration,
+                ),
+                beat_duration=duration,
             )
         except Exception as e:
             print(f"[LessonScene] Error executing action '{action}': {e}")
@@ -222,13 +243,15 @@ class LessonScene(_BaseScene):
         
         if cache_key not in self.renderer_cache:
             if renderer_type == "insertion_sort":
-                self.renderer_cache[cache_key] = InsertionSortRenderer(language=language)
+                self.renderer_cache[cache_key] = InsertionSortRenderer(self, language=language)
             elif renderer_type == "binary_search":
-                self.renderer_cache[cache_key] = BinarySearchRenderer(language=language)
+                self.renderer_cache[cache_key] = BinarySearchRenderer(self, language=language)
+            elif renderer_type == "linear_search":
+                self.renderer_cache[cache_key] = LinearSearchRenderer(self, language=language)
             elif renderer_type == "bubble_sort":
-                self.renderer_cache[cache_key] = BubbleSortRenderer(language=language)
+                self.renderer_cache[cache_key] = BubbleSortRenderer(self, language=language)
             elif renderer_type == "selection_sort":
-                self.renderer_cache[cache_key] = SelectionSortRenderer(language=language)
+                self.renderer_cache[cache_key] = SelectionSortRenderer(self, language=language)
             else:
                 raise ValueError(f"Unknown renderer type: {renderer_type}")
         

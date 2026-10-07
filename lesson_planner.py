@@ -54,7 +54,7 @@ from language_codes import (
 
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 MODEL        = "llama3:latest"
-TIMEOUT_SECS = 240   # Allows complex multi-concept topics to complete generation
+TIMEOUT_SECS = None   # No timeout - Ollama can take as long as needed
 
 # ---------------------------------------------------------------------------
 # ALGORITHM CLASSIFICATION TABLE
@@ -208,6 +208,8 @@ def build_planning_prompt(topic: str, language: LanguageCode) -> str:
     - Concrete visual plan with specific actions
     
     Quality over speed — takes up to 240 seconds if needed.
+    Target: 45-90 seconds of narration for comprehensive educational content.
+    Minimum: 30 seconds of narration.
     """
     lang_display = LANGUAGE_NAMES[language]
     lang_native  = LANGUAGE_NATIVE_NAMES[language]
@@ -328,11 +330,70 @@ Example visual plans for BINARY SEARCH:
     "data": {"value": "O(log n)"}
   }
 }"""
+        elif algo_family == "linear_search":
+            visual_examples = """
+Example visual plans for LINEAR SEARCH:
+{
+  "visual": {
+    "type": "array",
+    "action": "show_array",
+    "data": {"values": [12, 7, 23, 45, 9, 31], "target": 45}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "set_pointer",
+    "data": {"index": 0}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "compare_element",
+    "data": {"index": 0, "target": 45}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "move_pointer",
+    "data": {"from": 0, "to": 1}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "compare_element",
+    "data": {"index": 1, "target": 45}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "found",
+    "data": {"index": 3, "value": 45}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "show_result",
+    "data": {"comparisons": 4, "index": 3}
+  }
+}
+{
+  "visual": {
+    "type": "array",
+    "action": "show_complexity",
+    "data": {"best": "O(1)", "average": "O(n)", "worst": "O(n)"}
+  }
+}"""
         else:
             visual_examples = """
 Use appropriate visual actions for the algorithm.
 For sorting: show_array, compare, swap, mark_sorted, show_complexity
-For searching: show_array, check_middle, found, eliminate_half"""
+For searching: show_array, set_pointer, move_pointer, compare_element, found, show_result, show_complexity"""
         
         algorithm_instruction = (
             f"\n"
@@ -348,12 +409,19 @@ For searching: show_array, check_middle, found, eliminate_half"""
         )
 
     return (
-        "You are LocalLearn AI's lesson planner. Create a 60-90 second educational video.\n"
+        "You are LocalLearn AI's lesson planner. Create a comprehensive educational video.\n"
         f"\nTopic: {topic}\n"
         "---\n"
         f"{language_instruction}\n"
         "---\n"
         f"{algorithm_instruction}"
+        "\n"
+        "CRITICAL REQUIREMENTS:\n"
+        "1. VIDEO DURATION: Generate enough content for 45-90 seconds of narration\n"
+        "2. MINIMUM: At least 30 seconds of narration (NEVER less)\n"
+        "3. QUALITY: Each beat should teach something meaningful\n"
+        "4. STRUCTURE: Include introduction, explanation, step-by-step examples, complexity analysis\n"
+        "5. DETAIL: For algorithms, show concrete examples with specific array values\n"
         "\n"
         "OUTPUT: Return ONLY valid JSON (no markdown, no fences, no extra text).\n"
         "{\n"
@@ -364,22 +432,47 @@ For searching: show_array, check_middle, found, eliminate_half"""
         '    {\n'
         '      "id": "beat_1",\n'
         '      "concept": "introduction",\n'
-        f'      "narration": "<sentence in {lang_display}>",\n'
+        f'      "narration": "<educational sentence in {lang_display} - describe what the algorithm does>",\n'
         f'      "visual_text": "<label in {lang_display}>",\n'
         '      "importance": "high",\n'
-        '      "visual": {"type": "array", "action": "show_array", "data": {"values": [5,2,8,3,1]}}\n'
-        '    }\n'
-        '    // 6-10 beats total\n'
+        '      "visual": {"type": "array", "action": "show_array", "data": {"values": [12,7,23,45,9,31]}}\n'
+        '    },\n'
+        '    {\n'
+        '      "id": "beat_2",\n'
+        '      "concept": "algorithm_explanation",\n'
+        f'      "narration": "<educational sentence in {lang_display} - explain how it works>",\n'
+        f'      "visual_text": "<label in {lang_display}>",\n'
+        '      "importance": "key",\n'
+        '      "visual": {"type": "array", "action": "set_pointer", "data": {"index": 0}}\n'
+        '    },\n'
+        '    {\n'
+        '      "id": "beat_3",\n'
+        '      "concept": "step1",\n'
+        f'      "narration": "<educational sentence in {lang_display} - first comparison step>",\n'
+        f'      "visual_text": "<label in {lang_display}>",\n'
+        '      "importance": "key",\n'
+        '      "visual": {"type": "array", "action": "compare_element", "data": {"index": 0}}\n'
+        '    },\n'
+        '    // ... continue with MORE beats showing:\n'
+        '    // - Multiple comparison steps (beat 4, 5, 6)\n'
+        '    // - Finding the element (beat 7)\n'
+        '    // - Showing result with comparison count (beat 8)\n'
+        '    // - Edge cases if relevant (beat 9)\n'
+        '    // - Time complexity analysis (beat 10)\n'
+        '    // - Summary (beat 11)\n'
+        '    // TOTAL: 10-15 beats for comprehensive 45-90 second explanation\n'
         '  ]\n'
         '}\n'
         "\n"
         "RULES:\n"
         f"1. Pure JSON only (first char: {{, last char: }})\n"
-        f"2. 6-10 beats\n"
+        f"2. 10-15 beats minimum (for 45-90 seconds)\n"
         f"3. All text in {lang_display}\n"
-        f"4. Concrete visual actions (see examples above)\n"
-        f"5. One sentence per beat\n"
-        f"6. Match algorithm: {_ALGO_SCENE_GUIDANCE.get(algo_family, {}).get('description', topic)}\n"
+        f"4. Concrete visual actions with specific data (see examples above)\n"
+        f"5. One educational sentence per beat (aim for 3-6 seconds of speech each)\n"
+        f"6. Show step-by-step execution for algorithms\n"
+        f"7. Include complexity analysis\n"
+        f"8. NEVER generate less than 8 beats\n"
     )
 
 
@@ -407,6 +500,7 @@ def _call_ollama(prompt: str) -> str:
         method  = "POST",
     )
     try:
+        # No timeout - Ollama can take as long as needed
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECS) as resp:
             raw_bytes = resp.read()
     except urllib.error.URLError as exc:
@@ -417,16 +511,18 @@ def _call_ollama(prompt: str) -> str:
                 "llama3:latest is available."
             ) from exc
         if "timed out" in reason.lower() or "timeout" in reason.lower():
-            raise TimeoutError(
-                f"Ollama did not respond within {TIMEOUT_SECS} seconds."
-            ) from exc
+            timeout_msg = "Ollama request timed out (no timeout limit set)."
+            if TIMEOUT_SECS:
+                timeout_msg = f"Ollama did not respond within {TIMEOUT_SECS} seconds."
+            raise TimeoutError(timeout_msg) from exc
         raise RuntimeError(f"Ollama connection error: {reason}") from exc
     except Exception as exc:
         msg = str(exc).lower()
         if "timed out" in msg or "timeout" in msg:
-            raise TimeoutError(
-                f"Ollama did not respond within {TIMEOUT_SECS} seconds."
-            ) from exc
+            timeout_msg = "Ollama request timed out (no timeout limit set)."
+            if TIMEOUT_SECS:
+                timeout_msg = f"Ollama did not respond within {TIMEOUT_SECS} seconds."
+            raise TimeoutError(timeout_msg) from exc
         raise
 
     try:

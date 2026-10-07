@@ -202,12 +202,34 @@ class MuxingService:
         
         print(f"[MuxingService] Concatenating {len(audio_files)} audio files...")
         
+        # Convert all audio file paths to absolute paths to avoid working directory issues
+        audio_files_abs = [str(Path(f).resolve()) for f in audio_files]
+        
         # Concatenate audio files
         try:
-            concatenate_audio_files(
-                audio_files=audio_files,
+            success = concatenate_audio_files(
+                input_files=audio_files_abs,
                 output_path=str(concat_audio_path)
             )
+            if not success:
+                raise RuntimeError(
+                    f"concatenate_audio_files returned False (check logs)"
+                )
+            
+            # Verify the file was actually created
+            if not Path(concat_audio_path).exists():
+                raise RuntimeError(
+                    f"Concatenated audio file was not created: {concat_audio_path}"
+                )
+            
+            file_size = Path(concat_audio_path).stat().st_size
+            if file_size == 0:
+                raise RuntimeError(
+                    f"Concatenated audio file is empty: {concat_audio_path}"
+                )
+            
+            print(f"[MuxingService] Audio concatenated successfully: {file_size} bytes")
+            
         except Exception as e:
             raise RuntimeError(f"Audio concatenation failed: {e}") from e
         
@@ -219,15 +241,20 @@ class MuxingService:
                 output_path=output_path,
                 overwrite=overwrite
             )
-            return result
-        finally:
-            # Clean up concatenated audio if it was a temp file
+            
+            # Clean up concatenated audio only AFTER successful mux
             if concat_audio_path and Path(concat_audio_path).name == "concatenated_audio.wav":
                 try:
                     Path(concat_audio_path).unlink()
                     print(f"[MuxingService] Cleaned up temp audio: {concat_audio_path}")
                 except Exception:
                     pass
+            
+            return result
+            
+        except Exception as e:
+            # Don't delete concatenated audio on mux failure — user may want to inspect it
+            raise RuntimeError(f"Video muxing failed: {e}") from e
     
     def add_audio_to_silent_video(
         self,
