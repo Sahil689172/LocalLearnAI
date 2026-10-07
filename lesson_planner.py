@@ -54,7 +54,7 @@ from language_codes import (
 
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 MODEL        = "llama3:latest"
-TIMEOUT_SECS = 240   # allow up to 4 minutes for high-quality planning
+TIMEOUT_SECS = 240   # Allows complex multi-concept topics to complete generation
 
 # ---------------------------------------------------------------------------
 # ALGORITHM CLASSIFICATION TABLE
@@ -79,6 +79,12 @@ _ALGO_KEYWORDS: list[tuple[str, str]] = [
     # searching
     ("binary search",   "binary_search"),
     ("linear search",   "linear_search"),
+    # hashing
+    ("double hashing",  "double_hashing"),
+    ("linear probing",  "linear_probing"),
+    ("quadratic probing", "quadratic_probing"),
+    ("hash table",      "hash_table"),
+    ("hash map",        "hash_map"),
 ]
 
 # Scene types that are ONLY valid for binary search.
@@ -137,6 +143,41 @@ _ALGO_SCENE_GUIDANCE: dict[str, dict] = {
         "forbidden":    ["array_search"],
         "complexity":   "O(n)",
         "description":  "linear search — scans each element sequentially",
+    },
+    "double_hashing": {
+        "preferred":    ["title", "definition", "explanation",
+                         "complexity", "summary"],
+        "forbidden":    ["array_search", "array_sort"],
+        "complexity":   "O(1) average",
+        "description":  "double hashing — collision resolution using two hash functions",
+    },
+    "linear_probing": {
+        "preferred":    ["title", "definition", "explanation",
+                         "complexity", "summary"],
+        "forbidden":    ["array_search", "array_sort"],
+        "complexity":   "O(1) average",
+        "description":  "linear probing — collision resolution by checking next slot",
+    },
+    "quadratic_probing": {
+        "preferred":    ["title", "definition", "explanation",
+                         "complexity", "summary"],
+        "forbidden":    ["array_search", "array_sort"],
+        "complexity":   "O(1) average",
+        "description":  "quadratic probing — collision resolution using quadratic function",
+    },
+    "hash_table": {
+        "preferred":    ["title", "definition", "explanation",
+                         "complexity", "summary"],
+        "forbidden":    ["array_search", "array_sort"],
+        "complexity":   "O(1) average",
+        "description":  "hash table — data structure for fast key-value lookups",
+    },
+    "hash_map": {
+        "preferred":    ["title", "definition", "explanation",
+                         "complexity", "summary"],
+        "forbidden":    ["array_search", "array_sort"],
+        "complexity":   "O(1) average",
+        "description":  "hash map — maps keys to values using hash function",
     },
 }
 
@@ -307,54 +348,38 @@ For searching: show_array, check_middle, found, eliminate_half"""
         )
 
     return (
-        "You are LocalLearn AI's high-quality lesson planner.\n"
-        f"Create a structured 60-120 second educational video about:\n"
-        f"\n    {topic}\n\n"
+        "You are LocalLearn AI's lesson planner. Create a 60-90 second educational video.\n"
+        f"\nTopic: {topic}\n"
         "---\n"
         f"{language_instruction}\n"
         "---\n"
         f"{algorithm_instruction}"
         "\n"
-        "OUTPUT FORMAT — JSON ONLY:\n"
+        "OUTPUT: Return ONLY valid JSON (no markdown, no fences, no extra text).\n"
         "{\n"
-        '  "topic": "...",\n'
+        f'  "topic": "{topic}",\n'
         f'  "language": "{lang_code}",\n'
-        '  "algorithm": "insertion_sort",  // if applicable\n'
-        '  "target_duration": 90,\n'
-        '  "learning_objectives": ["...", "..."],\n'
+        '  "target_duration": 75,\n'
         '  "beats": [\n'
         '    {\n'
         '      "id": "beat_1",\n'
         '      "concept": "introduction",\n'
-        f'      "narration": "<full sentence in {lang_display}>",\n'
-        f'      "visual_text": "<short label in {lang_display}>",\n'
+        f'      "narration": "<sentence in {lang_display}>",\n'
+        f'      "visual_text": "<label in {lang_display}>",\n'
         '      "importance": "high",\n'
-        '      "visual": {\n'
-        '        "type": "array",  // or "text", "diagram"\n'
-        '        "action": "show_array",  // concrete action\n'
-        '        "data": {"values": [5, 2, 8, 3, 1]},  // action-specific\n'
-        '        "emphasis": [1]  // optional: indices to highlight\n'
-        '      }\n'
-        '    },\n'
-        '    // ... 6-12 beats total\n'
+        '      "visual": {"type": "array", "action": "show_array", "data": {"values": [5,2,8,3,1]}}\n'
+        '    }\n'
+        '    // 6-10 beats total\n'
         '  ]\n'
         '}\n'
         "\n"
-        "CRITICAL RULES:\n"
-        "1. Return ONLY valid JSON. No markdown fences. No ```json. No explanatory text before or after. The very first character of your response must be { and the very last must be }.\n"
-        "2. Generate 6-12 beats that teach the concept step-by-step.\n"
-        f"3. All narration and visual_text MUST be in {lang_display}.\n"
-        "4. Visual plans MUST be concrete:\n"
-        '   - Good: {"action": "select_key", "data": {"index": 1}}\n'
-        '   - Bad:  {"action": "show concept", "data": {}}\n'
-        "5. Each beat narration is ONE complete sentence.\n"
-        "6. Beat IDs: beat_1, beat_2, ...\n"
-        "7. Concepts: introduction, definition, step_1, step_2, ..., complexity, summary\n"
-        "8. Visual actions must match the algorithm (see examples above).\n"
-        f"9. For {topic}, use time complexity: {_ALGO_SCENE_GUIDANCE.get(algo_family, {}).get('complexity', 'appropriate value')}\n"
-        "10. Do NOT mix algorithms (e.g., binary search for sorting).\n"
-        "\n"
-        "Quality is more important than speed. Take your time.\n"
+        "RULES:\n"
+        f"1. Pure JSON only (first char: {{, last char: }})\n"
+        f"2. 6-10 beats\n"
+        f"3. All text in {lang_display}\n"
+        f"4. Concrete visual actions (see examples above)\n"
+        f"5. One sentence per beat\n"
+        f"6. Match algorithm: {_ALGO_SCENE_GUIDANCE.get(algo_family, {}).get('description', topic)}\n"
     )
 
 
@@ -368,8 +393,10 @@ def _call_ollama(prompt: str) -> str:
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_predict": 2400,  # beats+visual plans need ~1500-2500 tokens
-            "temperature": 0.2,
+            "num_predict": 2000,  # Reduced from 2400 - more focused output
+            "temperature": 0.3,   # Slightly increased for faster convergence
+            "top_p": 0.9,         # Add nucleus sampling for efficiency
+            "num_ctx": 4096,      # Explicit context window
         },
     }
     body = json.dumps(payload).encode("utf-8")

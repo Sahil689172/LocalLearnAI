@@ -61,11 +61,12 @@ SCENE_CLASS   = "GeneratedLessonScene"
 QUALITY_FLAG  = "-ql"   # low quality = fast; use -qm/-qh for better quality
 OUTPUT_ROOT   = "output"
 MANIM_TIMEOUT = 600     # 10 minutes for Manim rendering
-TTS_TIMEOUT   = 600     # 10 minutes for TTS generation
+TTS_TIMEOUT   = 120     # 2 minutes for TTS generation (Piper is fast)
 
-# .tts-venv Python interpreter (has torch/parler_tts, no Manim)
+# TTS now uses Piper (lightweight) in the main .venv
+# No need for separate .tts-venv anymore
 _HERE       = os.path.dirname(os.path.abspath(__file__))
-TTS_PYTHON  = os.path.join(_HERE, ".tts-venv", "Scripts", "python.exe")
+TTS_PYTHON  = sys.executable  # Use same Python as main process
 TTS_WORKER  = os.path.join(_HERE, "tts_worker.py")
 
 SEP = "  " + "-" * 70
@@ -120,14 +121,14 @@ def _save_code(path: str, topic: str, run_dir: str, code: str) -> None:
 
 def _run_tts_subprocess(lesson_spec: dict, audio_dir: str) -> tuple:
     """
-    Run TTS generation inside .tts-venv by spawning tts_worker.py.
+    Run TTS generation using Piper TTS by spawning tts_worker.py.
 
-    generate.py runs in .venv (Manim, no torch).
-    tts_worker.py runs in .tts-venv (torch, parler_tts, no Manim).
+    Uses the main .venv (same Python as generate.py).
+    Piper is lightweight and doesn't need separate venv.
 
     Communication:
         stdin  -> JSON job
-        stdout <- JSON result (enriched beats)
+        stdout <- JSON result (PURE JSON, no other text)
         stderr -> progress lines printed live to the terminal
 
     Returns:
@@ -135,12 +136,6 @@ def _run_tts_subprocess(lesson_spec: dict, audio_dir: str) -> tuple:
     Raises:
         RuntimeError on any failure.
     """
-    if not os.path.exists(TTS_PYTHON):
-        raise RuntimeError(
-            f".tts-venv interpreter not found:\n  {TTS_PYTHON}\n"
-            "Create it with:  python -m venv .tts-venv\n"
-            "Then install:    .tts-venv\\Scripts\\pip install torch parler-tts soundfile transformers"
-        )
     if not os.path.exists(TTS_WORKER):
         raise RuntimeError(f"tts_worker.py not found: {TTS_WORKER}")
 
@@ -151,7 +146,7 @@ def _run_tts_subprocess(lesson_spec: dict, audio_dir: str) -> tuple:
         "language":   lesson_spec.get("language", "en"),
     }
 
-    print(f"  Spawning TTS worker (.tts-venv Python)...")
+    print(f"  Spawning TTS worker (Piper TTS)...")
     print(f"  Processing {len(beats)} beats...")
     print()
 

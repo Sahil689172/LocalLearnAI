@@ -7,6 +7,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.tts-venv/  # Old Indic-Parler environment (deprecated)
 
 # Manim source
 manim/
@@ -37,35 +38,41 @@ media/
 .DS_Store
 Thumbs.db
 
-# Local AI models
-models/
-*.safetensors
-*.bin
-*.pt
-*.pth
+# Piper TTS models (download separately, don't commit)
+models/piper/**/
+!models/piper/README.md
 *.onnx
-# Python virtual environments
-.venv/
-.tts-venv/
+*.onnx.json
 
-# Python cache
-__pycache__/
-*.py[cod]
-
-# TTS / ML model files
+# Old TTS models (deprecated)
 *.safetensors
-*.ckpt
-*.pth
-*.pt
 *.bin
+*.pt
+*.pth
+*.ckpt
 
-# Generated audio/video
+# Output directory
+output/
+
+# Temporary files
+test.wav
+*.tmp
+
+5
+# ============================================================
+# Piper TTS Models
+# ============================================================
+models/piper/**/*.onnx
+models/piper/**/*.onnx.json
+
+# Piper generated audio
 *.wav
-*.mp3
-*.mp4
+audio/
+tts_output/
 
-# Manim output
-media/
-
-# Environment variables
-.env
+# ============================================================
+# Old Indic-Parler TTS
+# ============================================================
+.tts-venv/
+models/indic-parler/
+models/parler/

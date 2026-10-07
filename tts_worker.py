@@ -65,23 +65,23 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     # ----------------------------------------------------------------
-    # Import TTS — only works inside .tts-venv
+    # Import TTS — Piper TTS (lightweight, local)
     # ----------------------------------------------------------------
     try:
-        from tts.indic_parler import IndicParlerTTS, TTSConfig
+        from tts.piper_tts import PiperTTS, PiperConfig
         from tts.audio_utils import measure_audio_duration
     except ImportError as e:
-        _fail(f"TTS import failed (run inside .tts-venv): {e}")
+        _fail(f"TTS import failed: {e}")
 
     # ----------------------------------------------------------------
-    # Load model ONCE
+    # Load Piper TTS ONCE
     # ----------------------------------------------------------------
-    print(f"[tts_worker] Loading model for language={language}...", file=sys.stderr, flush=True)
+    print(f"[tts_worker] Loading Piper TTS for language={language}...", file=sys.stderr, flush=True)
     try:
-        tts = IndicParlerTTS(TTSConfig(language=language))
+        tts = PiperTTS(PiperConfig(language=language))
         tts.load()
     except Exception as e:
-        _fail(f"Model load failed: {e}")
+        _fail(f"Piper TTS load failed: {e}")
 
     # ----------------------------------------------------------------
     # Generate audio for each beat

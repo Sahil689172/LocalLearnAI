@@ -30,7 +30,7 @@ class TimingService:
         
         Parameters
         ----------
-        tts_service : IndicParlerTTS
+        tts_service : PiperTTS
             Pre-initialized TTS service (already loaded model).
         output_dir : str | Path, optional
             Directory to store generated audio files.
@@ -230,7 +230,6 @@ class TimingService:
 
 def create_timing_service(
     output_dir: str | Path = "audio_output",
-    tts_venv_path: str | Path = ".tts-venv"
 ) -> TimingService:
     """
     Factory function to create a TimingService with a pre-loaded TTS model.
@@ -242,18 +241,16 @@ def create_timing_service(
     ----------
     output_dir : str | Path, optional
         Directory for audio output files.
-    tts_venv_path : str | Path, optional
-        Path to Python virtual environment with TTS dependencies.
     
     Returns
     -------
     TimingService
         Ready-to-use timing service with loaded TTS model.
     """
-    print("[TimingService] Initializing TTS service...")
-    from tts.indic_parler import IndicParlerTTS
-    tts_service = IndicParlerTTS()
+    print("[TimingService] Initializing Piper TTS service...")
+    from tts.piper_tts import PiperTTS
+    tts_service = PiperTTS()
     tts_service.load()
-    print("[TimingService] TTS model loaded successfully.")
+    print("[TimingService] Piper TTS loaded successfully.")
     
     return TimingService(tts_service=tts_service, output_dir=output_dir)
