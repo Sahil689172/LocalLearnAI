@@ -57,8 +57,6 @@ output/
 # Temporary files
 test.wav
 *.tmp
-
-5
 # ============================================================
 # Piper TTS Models
 # ============================================================
@@ -75,4 +73,5 @@ tts_output/
 # ============================================================
 .tts-venv/
 models/indic-parler/
-models/parler/
+models/parler/frontend/node_modules/
+node_modules/

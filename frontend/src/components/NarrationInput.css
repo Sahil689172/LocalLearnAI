@@ -1,0 +1,33 @@
+/**
+ * NarrationInput Component Styles
+ */
+
+.narration-input-group {
+  margin-bottom: 24px;
+}
+
+.narration-input {
+  width: 100%;
+  min-height: 120px;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 1rem;
+  line-height: 1.6;
+  resize: vertical;
+  transition: all 0.2s;
+}
+
+.narration-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.narration-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+  white-space: pre-line;
+}

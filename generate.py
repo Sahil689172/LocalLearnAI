@@ -36,8 +36,6 @@ import os
 import re
 import time
 import json
-import glob
-import shutil
 import subprocess
 import datetime
 from pathlib import Path
@@ -45,6 +43,8 @@ from pathlib import Path
 from lesson_planner import generate_lesson_plan
 from visual_renderer import create_visual_renderer
 from muxing_service import create_muxing_service
+from manimgl_renderer import create_renderer
+from config import MANIMGL_QUALITY
 from language_codes import (
     LanguageCode,
     DEFAULT_LANGUAGE,
@@ -58,9 +58,8 @@ from language_codes import (
 
 MODEL         = "llama3:latest"
 SCENE_CLASS   = "GeneratedLessonScene"
-QUALITY_FLAG  = "-ql"   # low quality = fast; use -qm/-qh for better quality
+QUALITY_FLAG  = MANIMGL_QUALITY  # ManimGL quality from config
 OUTPUT_ROOT   = "output"
-MANIM_TIMEOUT = 600     # 10 minutes for Manim rendering
 TTS_TIMEOUT   = 120     # 2 minutes for TTS generation (Piper is fast)
 
 # TTS now uses Piper (lightweight) in the main .venv
@@ -193,81 +192,46 @@ def _run_tts_subprocess(lesson_spec: dict, audio_dir: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# MANIM RENDERER
+# MANIMGL RENDERER
 # ---------------------------------------------------------------------------
 
 def _render_manim(scene_file: str, scene_class: str, quality_flag: str, output_dir: str) -> tuple:
     """
-    Invoke Manim via subprocess to render silent video.
+    Invoke ManimGL via subprocess to render silent video.
+    
+    Uses the configured ManimGL executable from config.py.
 
     Returns:
         (success: bool, video_path: str|None, elapsed_seconds: float)
     """
-    cmd = [
-        sys.executable, "-m", "manim",
-        quality_flag,
-        scene_file,
-        scene_class,
-        "--output_file", "silent_video",
-        "--media_dir", os.path.join(output_dir, "media"),
-    ]
-
-    start = time.perf_counter()
-
-    try:
-        print("  Running Manim...")
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=MANIM_TIMEOUT
-        )
-        
-        elapsed = time.perf_counter() - start
-        
-        if result.returncode != 0:
-            print(f"  [ERROR] Manim rendering failed:")
-            print(result.stderr)
-            return False, None, elapsed
-        
-        # Find the generated video
-        video_path = _find_manim_output(output_dir, scene_file, scene_class)
-        
-        if not video_path:
-            print("  [ERROR] Could not locate Manim output video")
-            return False, None, elapsed
-        
-        return True, video_path, elapsed
-
-    except subprocess.TimeoutExpired:
-        elapsed = time.perf_counter() - start
-        print(f"  [ERROR] Manim rendering timed out after {MANIM_TIMEOUT}s")
-        return False, None, elapsed
-    except FileNotFoundError:
-        elapsed = time.perf_counter() - start
-        print("  [ERROR] Manim not found. Install with: pip install manim")
-        return False, None, elapsed
-    except Exception as e:
-        elapsed = time.perf_counter() - start
-        print(f"  [ERROR] Manim rendering failed: {e}")
-        return False, None, elapsed
-
-
-def _find_manim_output(output_dir: str, scene_file: str, scene_class: str) -> str | None:
-    """Find the Manim-generated video file."""
-    # Manim outputs to media/videos/<scene_name>/<quality>/
-    media_dir = os.path.join(output_dir, "media", "videos")
+    print("  Running ManimGL...")
     
-    if not os.path.exists(media_dir):
-        return None
+    # Create ManimGL renderer
+    renderer = create_renderer(quality=quality_flag)
     
-    # Search for MP4 files
-    for root, dirs, files in os.walk(media_dir):
-        for file in files:
-            if file.endswith(".mp4"):
-                return os.path.join(root, file)
+    # Render scene
+    result = renderer.render_scene(
+        scene_file=scene_file,
+        scene_class=scene_class,
+        output_dir=output_dir,
+        output_name="silent_video",
+        write_to_movie=True
+    )
     
-    return None
+    if not result.success:
+        print(f"  [ERROR] ManimGL rendering failed:")
+        print(f"  Return code: {result.return_code}")
+        if result.stderr:
+            print(f"  Stderr:\n{result.stderr}")
+        if result.error_message:
+            print(f"  {result.error_message}")
+        return False, None, result.elapsed_seconds
+    
+    print(f"  ✓ ManimGL rendering complete")
+    print(f"    Render time: {result.elapsed_seconds:.2f}s")
+    print(f"    Video: {os.path.basename(result.video_path)}")
+    
+    return True, result.video_path, result.elapsed_seconds
 
 # ---------------------------------------------------------------------------
 # DISPLAY

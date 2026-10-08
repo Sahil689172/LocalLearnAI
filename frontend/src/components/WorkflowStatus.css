@@ -1,0 +1,147 @@
+/**
+ * WorkflowStatus Component Styles
+ */
+
+.workflow-status {
+  margin-top: 2rem;
+  padding: 2rem;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.workflow-status-header h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+
+.workflow-error {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  color: #ef4444;
+}
+
+.workflow-error strong {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 1.1rem;
+}
+
+.workflow-phases {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.workflow-phase {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.75rem;
+  border-radius: 6px;
+  transition: background 0.2s ease;
+}
+
+.workflow-phase-pending {
+  opacity: 0.5;
+}
+
+.workflow-phase-completed {
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.workflow-phase-active {
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.workflow-phase-failed {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.workflow-phase-icon {
+  font-size: 1.5rem;
+  font-weight: bold;
+  min-width: 2rem;
+  text-align: center;
+}
+
+.workflow-phase-completed .workflow-phase-icon {
+  color: var(--success);
+}
+
+.workflow-phase-active .workflow-phase-icon {
+  color: var(--accent-primary);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.workflow-phase-failed .workflow-phase-icon {
+  color: #ef4444;
+}
+
+.workflow-phase-pending .workflow-phase-icon {
+  color: var(--text-secondary);
+}
+
+.workflow-phase-content {
+  flex: 1;
+}
+
+.workflow-phase-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.workflow-phase-message {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
+}
+
+.workflow-phase-details {
+  font-size: 0.85rem;
+  color: var(--accent-primary);
+  margin-top: 0.25rem;
+  font-weight: 500;
+}
+
+.workflow-current-status {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.workflow-spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgba(99, 102, 241, 0.2);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

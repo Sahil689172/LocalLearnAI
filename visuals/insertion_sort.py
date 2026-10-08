@@ -11,7 +11,7 @@ Demonstrates the actual insertion sort mechanics:
 - Visual distinction between sorted/unsorted regions
 """
 
-from manim import *
+from manimlib import *
 from .base import VisualRenderer, VisualAction
 from .array_visualizer import ArrayVisualizer
 

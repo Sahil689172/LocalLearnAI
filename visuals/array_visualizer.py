@@ -4,7 +4,7 @@ LocalLearn AI - Array Visualizer
 Reusable component for rendering array-based algorithm visualizations.
 """
 
-from manim import *
+from manimlib import *
 
 
 class ArrayVisualizer:

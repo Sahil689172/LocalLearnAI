@@ -1,0 +1,47 @@
+.script-editor-group {
+  margin-bottom: 32px;
+}
+
+.script-editor {
+  width: 100%;
+  min-height: 400px;
+  padding: 20px;
+  font-size: 0.95rem;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  line-height: 1.6;
+  background: var(--bg-card);
+  border: 2px solid var(--border-color);
+  border-radius: 12px;
+  color: var(--text-primary);
+  transition: all 0.2s;
+  outline: none;
+  resize: vertical;
+  tab-size: 4;
+}
+
+.script-editor:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.script-editor::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+
+.editor-hint {
+  margin-top: 12px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 768px) {
+  .script-editor {
+    min-height: 300px;
+    font-size: 0.875rem;
+    padding: 16px;
+  }
+}

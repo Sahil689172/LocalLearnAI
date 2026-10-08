@@ -4,7 +4,7 @@ LocalLearn AI - Binary Search Visual Renderer
 Visual rendering for binary search algorithm.
 """
 
-from manim import *
+from manimlib import *
 from .base import VisualRenderer, VisualAction
 from .array_visualizer import ArrayVisualizer
 

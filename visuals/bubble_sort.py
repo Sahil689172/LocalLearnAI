@@ -4,7 +4,7 @@ LocalLearn AI - Bubble Sort Visual Renderer
 Visual rendering for bubble sort algorithm.
 """
 
-from manim import *
+from manimlib import *
 from .base import VisualRenderer, VisualAction
 from .array_visualizer import ArrayVisualizer
 

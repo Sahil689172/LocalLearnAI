@@ -10,7 +10,7 @@ Shows step-by-step search through an unsorted array:
 - Result display with comparison count
 """
 
-from manim import *
+from manimlib import *
 from .base import VisualRenderer, VisualAction
 from .array_visualizer import ArrayVisualizer
 
