@@ -416,14 +416,36 @@ For searching: show_array, set_pointer, move_pointer, compare_element, found, sh
         "---\n"
         f"{algorithm_instruction}"
         "\n"
-        "CRITICAL REQUIREMENTS:\n"
-        "1. VIDEO DURATION: Generate enough content for 45-90 seconds of narration\n"
-        "2. MINIMUM: At least 30 seconds of narration (NEVER less)\n"
-        "3. QUALITY: Each beat should teach something meaningful\n"
-        "4. STRUCTURE: Include introduction, explanation, step-by-step examples, complexity analysis\n"
-        "5. DETAIL: For algorithms, show concrete examples with specific array values\n"
+        "CRITICAL REQUIREMENTS - READ CAREFULLY:\n"
         "\n"
-        "OUTPUT: Return ONLY valid JSON (no markdown, no fences, no extra text).\n"
+        "1. VIDEO DURATION:\n"
+        "   - Target: 45-90 seconds of narration\n"
+        "   - ABSOLUTE MINIMUM: 30 seconds (NEVER less)\n"
+        "   - Generate 10-15 beats (NOT 6-7)\n"
+        "   - Each beat = 3-6 seconds of narration\n"
+        "   - Do the math: 12 beats × 4 seconds = 48 seconds ✓\n"
+        "\n"
+        "2. CONTENT QUALITY:\n"
+        "   - Each beat must teach something meaningful\n"
+        "   - Do NOT repeat the same information\n"
+        "   - Include: intro → how it works → step-by-step example → complexity → summary\n"
+        "\n"
+        "3. ALGORITHM TOPICS:\n"
+        "   - Show concrete step-by-step execution\n"
+        "   - Use specific array values (e.g., [12, 7, 23, 45, 9, 31])\n"
+        "   - Show MULTIPLE comparison steps (not just 1-2)\n"
+        "   - Demonstrate the full algorithm from start to finish\n"
+        "\n"
+        "4. BEAT STRUCTURE FOR ALGORITHMS:\n"
+        "   - Beat 1: Introduction (what the algorithm does)\n"
+        "   - Beat 2: Algorithm explanation (how it works)\n"
+        "   - Beats 3-9: Step-by-step demonstration (move pointer, compare, repeat)\n"
+        "   - Beat 10: Show result (comparisons count, index found)\n"
+        "   - Beat 11: Time complexity (best/average/worst cases)\n"
+        "   - Beat 12: Summary (key takeaways)\n"
+        "   TOTAL: 12 beats minimum\n"
+        "\n"
+        "OUTPUT FORMAT: Return ONLY valid JSON (no markdown, no fences, no extra text).\n"
         "{\n"
         f'  "topic": "{topic}",\n'
         f'  "language": "{lang_code}",\n'
@@ -435,7 +457,7 @@ For searching: show_array, set_pointer, move_pointer, compare_element, found, sh
         f'      "narration": "<educational sentence in {lang_display} - describe what the algorithm does>",\n'
         f'      "visual_text": "<label in {lang_display}>",\n'
         '      "importance": "high",\n'
-        '      "visual": {"type": "array", "action": "show_array", "data": {"values": [12,7,23,45,9,31]}}\n'
+        '      "visual": {"type": "array", "action": "show_array", "data": {"values": [12,7,23,45,9,31], "target": 45}}\n'
         '    },\n'
         '    {\n'
         '      "id": "beat_2",\n'
@@ -447,32 +469,71 @@ For searching: show_array, set_pointer, move_pointer, compare_element, found, sh
         '    },\n'
         '    {\n'
         '      "id": "beat_3",\n'
-        '      "concept": "step1",\n'
-        f'      "narration": "<educational sentence in {lang_display} - first comparison step>",\n'
+        '      "concept": "step_1",\n'
+        f'      "narration": "<educational sentence in {lang_display} - first comparison>",\n'
         f'      "visual_text": "<label in {lang_display}>",\n'
         '      "importance": "key",\n'
-        '      "visual": {"type": "array", "action": "compare_element", "data": {"index": 0}}\n'
+        '      "visual": {"type": "array", "action": "compare_element", "data": {"index": 0, "target": 45}}\n'
         '    },\n'
-        '    // ... continue with MORE beats showing:\n'
-        '    // - Multiple comparison steps (beat 4, 5, 6)\n'
-        '    // - Finding the element (beat 7)\n'
-        '    // - Showing result with comparison count (beat 8)\n'
-        '    // - Edge cases if relevant (beat 9)\n'
-        '    // - Time complexity analysis (beat 10)\n'
-        '    // - Summary (beat 11)\n'
-        '    // TOTAL: 10-15 beats for comprehensive 45-90 second explanation\n'
+        '    {\n'
+        '      "id": "beat_4",\n'
+        '      "concept": "step_2",\n'
+        f'      "narration": "<educational sentence in {lang_display} - move to next element>",\n'
+        f'      "visual_text": "<label in {lang_display}>",\n'
+        '      "importance": "normal",\n'
+        '      "visual": {"type": "array", "action": "move_pointer", "data": {"from": 0, "to": 1}}\n'
+        '    },\n'
+        '    {\n'
+        '      "id": "beat_5",\n'
+        '      "concept": "step_3",\n'
+        f'      "narration": "<educational sentence in {lang_display} - second comparison>",\n'
+        f'      "visual_text": "<label in {lang_display}>",\n'
+        '      "importance": "normal",\n'
+        '      "visual": {"type": "array", "action": "compare_element", "data": {"index": 1, "target": 45}}\n'
+        '    },\n'
+        '    // ... CONTINUE with beats 6-9 showing MORE steps ...\n'
+        '    // Beat 6: move_pointer (index 1 to 2)\n'
+        '    // Beat 7: compare_element (index 2)\n'
+        '    // Beat 8: move_pointer (index 2 to 3)\n'
+        '    // Beat 9: compare_element (index 3) - found!\n'
+        '    {\n'
+        '      "id": "beat_10",\n'
+        '      "concept": "result",\n'
+        f'      "narration": "<educational sentence in {lang_display} - element found at index 3>",\n'
+        f'      "visual_text": "<label in {lang_display}>",\n'
+        '      "importance": "high",\n'
+        '      "visual": {"type": "array", "action": "found", "data": {"index": 3, "value": 45}}\n'
+        '    },\n'
+        '    {\n'
+        '      "id": "beat_11",\n'
+        '      "concept": "statistics",\n'
+        f'      "narration": "<educational sentence in {lang_display} - 4 comparisons made>",\n'
+        f'      "visual_text": "<label in {lang_display}>",\n'
+        '      "importance": "normal",\n'
+        '      "visual": {"type": "array", "action": "show_result", "data": {"comparisons": 4, "index": 3}}\n'
+        '    },\n'
+        '    {\n'
+        '      "id": "beat_12",\n'
+        '      "concept": "complexity",\n'
+        f'      "narration": "<educational sentence in {lang_display} - time complexity analysis>",\n'
+        f'      "visual_text": "<label in {lang_display}>",\n'
+        '      "importance": "high",\n'
+        '      "visual": {"type": "array", "action": "show_complexity", "data": {"best": "O(1)", "average": "O(n)", "worst": "O(n)"}}\n'
+        '    }\n'
+        '    // REQUIRED: 12 beats minimum for 45+ seconds\n'
         '  ]\n'
         '}\n'
         "\n"
-        "RULES:\n"
-        f"1. Pure JSON only (first char: {{, last char: }})\n"
-        f"2. 10-15 beats minimum (for 45-90 seconds)\n"
-        f"3. All text in {lang_display}\n"
-        f"4. Concrete visual actions with specific data (see examples above)\n"
-        f"5. One educational sentence per beat (aim for 3-6 seconds of speech each)\n"
-        f"6. Show step-by-step execution for algorithms\n"
-        f"7. Include complexity analysis\n"
-        f"8. NEVER generate less than 8 beats\n"
+        "VALIDATION RULES:\n"
+        f"1. Pure JSON only (first char must be {{, last char must be }})\n"
+        f"2. MINIMUM 12 beats (preferably 12-15 beats)\n"
+        f"3. All narration and visual_text in {lang_display}\n"
+        f"4. Every beat MUST have: id, concept, narration, visual_text, importance, visual\n"
+        f"5. Visual MUST have: type, action, data\n"
+        f"6. Use the algorithm-specific actions shown in examples above\n"
+        f"7. Show step-by-step execution (multiple comparison/move steps)\n"
+        f"8. NEVER generate fewer than 10 beats\n"
+        f"9. Target total narration time: 45-90 seconds\n"
     )
 
 
@@ -486,10 +547,10 @@ def _call_ollama(prompt: str) -> str:
         "prompt": prompt,
         "stream": False,
         "options": {
-            "num_predict": 2000,  # Reduced from 2400 - more focused output
-            "temperature": 0.3,   # Slightly increased for faster convergence
-            "top_p": 0.9,         # Add nucleus sampling for efficiency
-            "num_ctx": 4096,      # Explicit context window
+            "num_predict": 4000,  # Increased for comprehensive 10-15 beat lessons (45-90s content)
+            "temperature": 0.7,   # Increased creativity for richer educational content
+            "top_p": 0.95,        # Wider sampling for detailed explanations
+            "num_ctx": 8192,      # Larger context window for complex topics
         },
     }
     body = json.dumps(payload).encode("utf-8")

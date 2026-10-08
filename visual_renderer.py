@@ -64,17 +64,29 @@ class LessonScene(_BaseScene):
         
         Ensures final video duration matches total audio duration.
         """
+        # Calculate total audio duration for synchronization
         total_audio_duration = sum(beat.get("audio_duration", 3.0) for beat in self.beats)
         
+        print(f"[LessonScene] Starting scene construction")
+        print(f"[LessonScene] Total beats: {len(self.beats)}")
+        print(f"[LessonScene] Total audio duration: {total_audio_duration:.2f}s")
+        
         for i, beat in enumerate(self.beats):
-            print(f"[LessonScene] Rendering beat {i+1}/{len(self.beats)}: {beat.get('id', '?')}")
+            beat_duration = beat.get("audio_duration", 3.0)
+            print(f"[LessonScene] Rendering beat {i+1}/{len(self.beats)}: {beat.get('id', '?')} (duration: {beat_duration:.2f}s)")
             self._render_beat(beat)
         
-        # Add a small buffer at the end to ensure video doesn't cut off early
+        # CRITICAL: Add buffer at the end to ensure video doesn't cut off early
         # This addresses the issue where video (16.7s) ends before audio (27.2s)
-        self.wait(0.5)
+        # The buffer ensures the video timeline matches or exceeds the audio timeline
+        buffer_duration = 1.0  # 1 second buffer
+        print(f"[LessonScene] Adding {buffer_duration}s buffer at end")
+        self.wait(buffer_duration)
         
-        print(f"[LessonScene] Total animation duration target: {total_audio_duration:.2f}s")
+        actual_duration = total_audio_duration + buffer_duration
+        print(f"[LessonScene] Scene construction complete")
+        print(f"[LessonScene] Expected video duration: {actual_duration:.2f}s")
+
     
     def _render_beat(self, beat: dict) -> None:
         """

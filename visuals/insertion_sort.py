@@ -64,6 +64,20 @@ class InsertionSortRenderer(VisualRenderer):
         super().__init__(scene, language)
         self.array_viz = None
         self.sorted_bound = 0  # everything before this index is sorted
+        self.temporary_objects = []  # Track temporary text/objects for cleanup
+    
+    def _cleanup_temporary_objects(self, run_time: float = 0.2):
+        """Remove all temporary objects from the scene."""
+        if self.temporary_objects:
+            self.scene.play(
+                *[FadeOut(obj) for obj in self.temporary_objects],
+                run_time=run_time
+            )
+            self.temporary_objects = []
+    
+    def _add_temporary(self, *objects):
+        """Mark objects as temporary (will be cleaned up before next action)."""
+        self.temporary_objects.extend(objects)
     
     def render_action(self, action: VisualAction, beat_duration: float):
         """Render an insertion sort visual action."""
@@ -88,7 +102,7 @@ class InsertionSortRenderer(VisualRenderer):
             self._fallback_text(action, beat_duration)
     
     def _show_array(self, action: VisualAction, duration: float):
-        """Display the initial unsorted array."""
+        """Display the initial unsorted array with title."""
         values = action.data.get("values", [5, 2, 8, 3, 1, 6, 4])
         
         self.array_viz = ArrayVisualizer(
@@ -98,9 +112,17 @@ class InsertionSortRenderer(VisualRenderer):
             language=self.language
         )
         
-        # Allocate time: 30% show, 70% wait
-        show_time = duration * 0.3
-        wait_time = duration * 0.7
+        # Create title
+        title = Text("Insertion Sort", font_size=36, weight=BOLD)
+        title.to_edge(UP, buff=0.5)
+        
+        # Allocate time: 20% title, 40% array show, 40% wait
+        title_time = duration * 0.2
+        show_time = duration * 0.4
+        wait_time = duration * 0.4
+        
+        self.scene.play(Write(title), run_time=title_time)
+        self._add_temporary(title)
         
         self.array_viz.show(run_time=show_time)
         self.scene.wait(wait_time)
@@ -108,33 +130,43 @@ class InsertionSortRenderer(VisualRenderer):
         self.sorted_bound = 1  # first element is trivially sorted
     
     def _select_key(self, action: VisualAction, duration: float):
-        """Highlight the key element to be inserted."""
+        """Highlight the key element to be inserted with enhanced animation."""
         if self.array_viz is None:
             return
+        
+        # Clean up previous temporary objects
+        cleanup_time = 0.15 if self.temporary_objects else 0
+        if self.temporary_objects:
+            self._cleanup_temporary_objects(run_time=cleanup_time)
         
         key_index = action.data.get("index", self.sorted_bound)
         
         # Clear previous highlights
-        self.array_viz.clear_all_highlights(run_time=0.2)
+        self.array_viz.clear_all_highlights(run_time=0.15)
         
-        # Allocate time: 40% highlight, 20% label, 40% wait
-        highlight_time = duration * 0.4
-        label_time = duration * 0.2
-        wait_time = duration * 0.4
+        # Allocate time: 35% highlight, 20% label, 45% wait
+        highlight_time = (duration - cleanup_time) * 0.35
+        label_time = (duration - cleanup_time - highlight_time) * 0.25
         
-        # Highlight key
-        self.array_viz.highlight([key_index], color=YELLOW, run_time=highlight_time)
-        
-        # Add "Key" label
-        key_pos = self.array_viz.cells[key_index].get_top() + UP * 0.4
-        self.array_viz.add_label(
-            "key",
-            _label("key", self.language),
-            key_pos,
-            run_time=label_time
+        # Highlight key with pulse animation
+        self.array_viz.highlight([key_index], color=YELLOW, run_time=highlight_time * 0.6)
+        self.scene.play(
+            Indicate(self.array_viz.cells[key_index], color=YELLOW, scale_factor=1.2),
+            run_time=highlight_time * 0.4
         )
         
-        self.scene.wait(wait_time)
+        # Add "Key" label with animation
+        key_pos = self.array_viz.cells[key_index].get_top() + UP * 0.5
+        key_label = Text(_label("key", self.language), font_size=24, color=YELLOW)
+        key_label.move_to(key_pos)
+        
+        self.scene.play(FadeIn(key_label, shift=DOWN * 0.2), run_time=label_time)
+        self._add_temporary(key_label)
+        
+        wait_time = duration - cleanup_time - highlight_time - label_time - 0.15
+        if wait_time > 0:
+            self.scene.wait(wait_time)
+        
         self.state["key_index"] = key_index
     
     def _compare(self, action: VisualAction, duration: float):
@@ -240,37 +272,57 @@ class InsertionSortRenderer(VisualRenderer):
         self.scene.wait(duration * 0.2)
     
     def _show_complexity(self, action: VisualAction, duration: float):
-        """Display time complexity."""
+        """Display time complexity with proper cleanup."""
+        # Clean up previous displays
+        cleanup_time = 0.18 if self.temporary_objects else 0
+        if self.temporary_objects:
+            self._cleanup_temporary_objects(run_time=cleanup_time)
+        
         complexity = action.data.get("value", "O(n²)")
         
-        # Allocate time
-        show_time = duration * 0.4
-        wait_time = duration * 0.6
-        
         # Create complexity display
-        heading = Text("Time Complexity", font_size=32)
-        heading.to_edge(UP, buff=0.5)
+        heading = Text("Time Complexity", font_size=32, weight=BOLD)
+        heading.to_edge(UP, buff=0.6)
         
-        formula = Text(complexity, font_size=56, color=BLUE)
+        formula = Text(complexity, font_size=56, color=BLUE, weight=BOLD)
         formula.move_to(ORIGIN)
         
-        self.scene.play(Write(heading), run_time=show_time * 0.4)
-        self.scene.play(Write(formula), run_time=show_time * 0.6)
-        self.scene.wait(wait_time)
+        # Allocate remaining time
+        show_time = (duration - cleanup_time) * 0.6
         
         self.scene.play(
-            FadeOut(heading),
-            FadeOut(formula),
-            run_time=0.5
+            LaggedStart(
+                FadeIn(heading, shift=DOWN * 0.2),
+                Write(formula),
+                lag_ratio=0.4
+            ),
+            run_time=show_time
         )
+        
+        complexity_group = VGroup(heading, formula)
+        self._add_temporary(complexity_group)
+        
+        wait_time = duration - cleanup_time - show_time
+        if wait_time > 0:
+            self.scene.wait(wait_time)
     
     def _fallback_text(self, action: VisualAction, duration: float):
-        """Fallback for unknown actions — show as text."""
+        """Fallback for unknown actions — show as text with proper lifecycle."""
+        # Clean up temporary objects
+        cleanup_time = 0.15 if self.temporary_objects else 0
+        if self.temporary_objects:
+            self._cleanup_temporary_objects(run_time=cleanup_time)
+        
         text_content = action.data.get("text", str(action.action))
         
         text = Text(text_content, font_size=32)
         text.move_to(ORIGIN)
         
-        self.scene.play(FadeIn(text, shift=UP * 0.2), run_time=duration * 0.3)
-        self.scene.wait(duration * 0.5)
-        self.scene.play(FadeOut(text), run_time=duration * 0.2)
+        fadein_time = (duration - cleanup_time) * 0.3
+        self.scene.play(FadeIn(text, shift=UP * 0.2), run_time=fadein_time)
+        
+        wait_time = (duration - cleanup_time - fadein_time) * 0.6
+        self.scene.wait(wait_time)
+        
+        fadeout_time = duration - cleanup_time - fadein_time - wait_time
+        self.scene.play(FadeOut(text), run_time=fadeout_time)
