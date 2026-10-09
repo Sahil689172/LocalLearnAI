@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import './CreateVideo.css'
+import { CrowdCanvas } from './CrowdCanvas'
 import ModeSelector from './ModeSelector'
 import TopicInput from './TopicInput'
 import ScriptEditor from './ScriptEditor'
@@ -111,82 +112,93 @@ function CreateVideo() {
   const canGenerate = mode === 'topic' ? topic.trim().length > 0 : script.trim().length > 0
 
   return (
-    <div className="create-video">
-      <header className="hero">
-        <h1 className="title">LocalLearn AI</h1>
-        <p className="subtitle">Create educational videos with AI + Manim</p>
-      </header>
+    <>
+      <div className="create-video">
+        <header className="hero">
+          <h1 className="title">LocalLearn AI</h1>
+          <p className="subtitle">Create educational videos with AI + Manim</p>
+        </header>
 
-      {!mode ? (
-        <ModeSelector onSelectMode={setMode} />
-      ) : (
-        <>
-          <div className="video-form">
-            <button 
-              className="back-button" 
-              onClick={handleReset}
-              disabled={isGenerating}
-            >
-              ← {jobStatus?.status === 'completed' ? 'Create Another Video' : 'Change Mode'}
-            </button>
+        {!mode ? (
+          <ModeSelector onSelectMode={setMode} />
+        ) : (
+          <>
+            <div className="video-form">
+              <button 
+                className="back-button" 
+                onClick={handleReset}
+                disabled={isGenerating}
+              >
+                ← {jobStatus?.status === 'completed' ? 'Create Another Video' : 'Change Mode'}
+              </button>
 
-            {mode === 'topic' && !isGenerating && !jobStatus && (
-              <>
-                <TopicInput value={topic} onChange={setTopic} />
-                <LanguageSelector value={language} onChange={setLanguage} />
-                <GenerateButton 
-                  onClick={handleGenerate} 
-                  disabled={!canGenerate || isGenerating}
-                  label="Generate Video"
-                />
-              </>
+              {mode === 'topic' && !isGenerating && !jobStatus && (
+                <>
+                  <TopicInput value={topic} onChange={setTopic} />
+                  <LanguageSelector value={language} onChange={setLanguage} />
+                  <GenerateButton 
+                    onClick={handleGenerate} 
+                    disabled={!canGenerate || isGenerating}
+                    label="Generate Video"
+                  />
+                </>
+              )}
+
+              {mode === 'script' && !isGenerating && !jobStatus && (
+                <>
+                  <ScriptEditor value={script} onChange={setScript} />
+                  <NarrationInput value={narration} onChange={setNarration} />
+                  <LanguageSelector value={language} onChange={setLanguage} />
+                  <GenerateButton 
+                    onClick={handleGenerate} 
+                    disabled={!canGenerate || isGenerating}
+                    label="Render Video"
+                  />
+                </>
+              )}
+              
+              {error && !jobStatus && (
+                <div className="error-message">
+                  <strong>Error:</strong> {error}
+                </div>
+              )}
+            </div>
+
+            {jobStatus && (
+              <WorkflowStatus
+                mode={mode === 'topic' ? 'topic' : 'custom_script'}
+                currentPhase={jobStatus.phase}
+                phaseLabel={jobStatus.phase_label}
+                message={jobStatus.message}
+                status={jobStatus.status}
+                error={jobStatus.error}
+                beatCount={jobStatus.beat_count}
+                audioSegments={jobStatus.audio_segments}
+                audioDuration={jobStatus.audio_duration}
+              />
             )}
 
-            {mode === 'script' && !isGenerating && !jobStatus && (
-              <>
-                <ScriptEditor value={script} onChange={setScript} />
-                <NarrationInput value={narration} onChange={setNarration} />
-                <LanguageSelector value={language} onChange={setLanguage} />
-                <GenerateButton 
-                  onClick={handleGenerate} 
-                  disabled={!canGenerate || isGenerating}
-                  label="Render Video"
-                />
-              </>
+            {jobStatus?.status === 'completed' && jobId && (
+              <VideoPlayer
+                jobId={jobId}
+                mode={mode === 'topic' ? 'topic' : 'custom_script'}
+                duration={jobStatus.duration}
+                language={language}
+              />
             )}
-            
-            {error && !jobStatus && (
-              <div className="error-message">
-                <strong>Error:</strong> {error}
-              </div>
-            )}
-          </div>
+          </>
+        )}
+      </div>
 
-          {jobStatus && (
-            <WorkflowStatus
-              mode={mode === 'topic' ? 'topic' : 'custom_script'}
-              currentPhase={jobStatus.phase}
-              phaseLabel={jobStatus.phase_label}
-              message={jobStatus.message}
-              status={jobStatus.status}
-              error={jobStatus.error}
-              beatCount={jobStatus.beat_count}
-              audioSegments={jobStatus.audio_segments}
-              audioDuration={jobStatus.audio_duration}
-            />
-          )}
-
-          {jobStatus?.status === 'completed' && jobId && (
-            <VideoPlayer
-              jobId={jobId}
-              mode={mode === 'topic' ? 'topic' : 'custom_script'}
-              duration={jobStatus.duration}
-              language={language}
-            />
-          )}
-        </>
+      {!mode && (
+        <CrowdCanvas 
+          src="https://s3-us-west-2.amazonaws.com/s.cdpn.io/175711/open-peeps-sheet.png"
+          rows={15}
+          cols={7}
+          speedMultiplier={1.5}
+        />
       )}
-    </div>
+    </>
   )
 }
 

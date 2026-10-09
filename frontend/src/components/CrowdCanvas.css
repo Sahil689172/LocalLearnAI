@@ -1,0 +1,43 @@
+.crowd-canvas-container {
+  /* Rendered outside any max-width container — just fill the viewport */
+  display: block;
+  width: 100vw;
+  max-width: none;
+  height: 400px;
+  overflow: hidden;
+  background: #FFFFFF;
+  border-radius: 0;
+  margin: 0;
+}
+
+.crowd-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .crowd-canvas-container {
+    height: 320px;
+  }
+}
+
+@media (max-width: 480px) {
+  .crowd-canvas-container {
+    height: 270px;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .crowd-canvas-container {
+    background: #FFFFFF;
+  }
+  
+  .crowd-canvas {
+    opacity: 0.5;
+  }
+}

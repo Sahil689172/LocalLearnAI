@@ -5,15 +5,19 @@
 }
 
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #1a1a24;
-  --bg-card: #232333;
-  --bg-card-hover: #2a2a3c;
-  --text-primary: #ffffff;
-  --text-secondary: #a0a0b8;
+  /* Light theme colors */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f8f9fa;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b7280;
   --accent-primary: #6366f1;
   --accent-hover: #4f46e5;
-  --border-color: #3a3a4a;
+  --border-color: #e5e7eb;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
   --success: #10b981;
   --success-hover: #059669;
 }
@@ -27,6 +31,7 @@ body {
   background: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 code {
